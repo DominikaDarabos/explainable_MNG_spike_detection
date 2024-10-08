@@ -3,6 +3,8 @@ from typing import Callable
 import torch
 from data_handling import *
 from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix, roc_auc_score
+from collections import Counter
+from sklearn.metrics import precision_recall_curve
 
 from torch.utils.tensorboard import SummaryWriter
 writer = SummaryWriter(log_dir="runs/tensorboard")
@@ -24,12 +26,14 @@ def train(model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, \
         total_loss = 0
         total_accuracy = 0
         total_number = 0
+        all_labels = []
+        all_predictions = []
         for data in data_loader:
             x, labels, _ = data
             optimizer.zero_grad()
             outputs = model(x)
             loss = criterion(outputs, labels)
-            writer.add_scalar("Loss/train", loss, epoch)
+            
 
             loss.backward()
             optimizer.step()
@@ -40,17 +44,26 @@ def train(model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, \
             y_classes = y.argmax(dim=-1)
             total_accuracy += (classes == y_classes).sum().item()
             total_number += labels.size(0)
-
-        total_accuracy /= total_number / 100
-        print(f'Epoch: {epoch+1:0{n_digits}d} / {n_epoch}, accuracy: {total_accuracy:.2f}%, loss: {total_loss:.4f}')
-
-        # Log per-epoch loss to TensorBoard
-        avg_loss = total_loss / len(data_loader)
-        writer.add_scalar("Loss/epoch", avg_loss, epoch)
+            total_true_positives += ((classes == 1) & (y_classes == 1)).sum().item()  # True Positives
+            total_false_positives += ((classes == 0) & (y_classes == 1)).sum().item()  # False Positives
+            total_false_negatives += ((classes == 1) & (y_classes == 0)).sum().item()  # False negatives
         
-        # Calculate and log per-epoch accuracy
+            all_labels.append(classes.cpu())
+            all_predictions.append(y_classes.cpu())
+
+        all_labels = torch.cat(all_labels)
+        all_predictions = torch.cat(all_predictions)
+
+        #precision, recall, _ = precision_recall_curve(all_labels, all_predictions)
+        precision = total_true_positives / (total_true_positives + total_false_positives) if total_true_positives + total_false_positives > 0 else 0.0
+        recall = total_true_positives / (total_true_positives + total_false_negatives) if total_true_positives + total_false_negatives > 0 else 0.0
+        total_accuracy /= total_number / 100
+        avg_loss = total_loss / len(data_loader)
         accuracy = total_accuracy / total_number
+        writer.add_pr_curve('Precision-Recall Curve', all_labels, all_predictions, global_step=epoch)
+        writer.add_scalar("Loss/epoch", avg_loss, epoch)
         writer.add_scalar("Accuracy/train", accuracy, epoch)
+        print(f'Epoch: {epoch+1:0{n_digits}d} / {n_epoch}, accuracy: {total_accuracy:.2f}%, loss: {total_loss:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}')
 
 def test(model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, \
          criterion: Callable[[torch.Tensor | list[torch.Tensor]], torch.Tensor]) -> tuple[float, float]:
@@ -161,8 +174,22 @@ def full_training():
             #criterion = VPLoss(torch.nn.CrossEntropyLoss(), 0.1)
 
             model = VPNet(n_in, n_channels, hidden1, VPTypes.FEATURES, affin + weight, WeightedHermiteSystem(n_in, hidden1, weight_num), [hidden1], n_out, device=device, dtype=dtype)
-            class_weights = torch.tensor([0.01, 0.99]).to(device)
-            weighted_criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
+            class_counts = Counter(dataSet.binary_labels.numpy())  # Replace with your actual label tensor or array
+
+            # Total number of samples
+            total_samples = sum(class_counts.values())
+
+            # Compute class weights
+            class_weights = {cls: total_samples / count for cls, count in class_counts.items()}
+            print("loss weights: ", class_weights)
+            total_weight = class_weights[0] + class_weights[1]
+
+            # Convert to a tensor (order must match class indices)
+            weights_tensor = torch.tensor([class_weights[0] / total_weight, class_weights[1] / total_weight]).to(device)
+
+            
+            #class_weights = torch.tensor([0.01, 0.99]).to(device)
+            weighted_criterion = torch.nn.CrossEntropyLoss(weight=weights_tensor)
             criterion = VPLoss(weighted_criterion, 0.1)
 
             optimizer = torch.optim.Adam(model.parameters(), lr=lr)
