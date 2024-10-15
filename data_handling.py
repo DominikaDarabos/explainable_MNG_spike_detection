@@ -9,6 +9,8 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, TensorDataset, random_split
 import pickle
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+from imblearn.under_sampling import RandomUnderSampler
+from sklearn.cluster import KMeans
 
 
 class NeurographyDataset:
@@ -144,6 +146,7 @@ class NeurographyDataset:
         test_size = total_size - train_size - val_size  # The rest for testing (20%)
 
         # Split the dataset into train, validation, and test sets
+        torch.manual_seed(4)
         train_dataset, val_dataset, test_dataset = random_split(dataset, [train_size, val_size, test_size])
 
         # Create DataLoaders for each set
@@ -151,11 +154,309 @@ class NeurographyDataset:
         val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
         test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
-        self.print_dataset_info("Training", train_dataset)
-        self.print_dataset_info("Validation", val_dataset)
-        self.print_dataset_info("Testing", test_dataset)
+        # self.print_dataset_info("Training", train_dataset)
+        # self.print_dataset_info("Validation", val_dataset)
+        # self.print_dataset_info("Testing", test_dataset)
 
         return train_loader, val_loader, test_loader
+
+
+    def random_split_undersampling(self):
+        if self.raw_data_windows is None or self.binary_labels is None or self.multiple_labels is None:
+            print("First generate the raw windows and labels (binary and multiple).")
+            return
+
+        # Convert raw data and labels to tensors
+        self.samples = torch.tensor(self.raw_data_windows, dtype=torch.float64).unsqueeze(1).to(self.device)
+
+        total_size = len(self.samples)
+        train_size = int(0.6 * total_size)  # 60% for training
+        val_size = int(0.2 * total_size)    # 20% for validation
+        test_size = total_size - train_size - val_size  # Remaining for testing (20%)
+
+        # Split indices for train, validation, and test
+        torch.manual_seed(4)
+        indices = torch.randperm(total_size)
+        train_indices = indices[:train_size]
+        val_indices = indices[train_size:train_size + val_size]
+        test_indices = indices[train_size + val_size:]
+
+        # Split the samples and labels based on the indices
+        train_samples, val_samples, test_samples = self.samples[train_indices], self.samples[val_indices], self.samples[test_indices]
+        train_binary_labels, val_binary_labels, test_binary_labels = self.binary_labels_onehot[train_indices], self.binary_labels_onehot[val_indices], self.binary_labels_onehot[test_indices]
+        train_multiple_labels, val_multiple_labels, test_multiple_labels = self.multiple_labels_onehot[train_indices], self.multiple_labels_onehot[val_indices], self.multiple_labels_onehot[test_indices]
+
+        # Apply undersampling to the training data BEFORE creating DataLoader
+        train_samples_under, train_binary_labels_under, train_multiple_labels_under = self.apply_oversampling_and_undersampling_comp(
+            train_samples, train_binary_labels, train_multiple_labels, 10000
+        )
+        val_samples_under, val_binary_labels_under, val_multiple_labels_under = self.apply_oversampling_and_undersampling_comp(
+            val_samples, val_binary_labels, val_multiple_labels, 10000
+        )
+
+        # Create separate datasets for train, validation, and test sets
+        train_dataset = TensorDataset(train_samples, train_binary_labels, train_multiple_labels)
+        train_dataset_under = TensorDataset(train_samples_under, train_binary_labels_under, train_multiple_labels_under)
+        val_dataset = TensorDataset(val_samples, val_binary_labels, val_multiple_labels)
+        val_dataset_under = TensorDataset(val_samples_under, val_binary_labels_under, val_multiple_labels_under)
+        test_dataset = TensorDataset(test_samples, test_binary_labels, test_multiple_labels)
+
+        # Create DataLoaders for each set
+        train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+        train_loader_under = DataLoader(train_dataset_under, batch_size=32, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+        val_loader_under = DataLoader(val_dataset_under, batch_size=32, shuffle=False)
+        test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+
+        print("Dataloaders are ready")
+
+        return train_loader, val_loader, test_loader, train_loader_under, val_loader_under
+
+
+    def apply_random_undersampling(self, samples, binary_labels, multiple_labels):
+        # Assuming binary_labels is one-hot encoded, convert it to class indices
+        binary_labels_flat = binary_labels.argmax(dim=1).cpu().numpy()  # Get the class indices from one-hot encoding
+
+        # Convert the samples and multiple_labels to numpy for manipulation
+        all_samples = samples.cpu().numpy()
+        all_multiple_labels = multiple_labels.cpu().numpy()
+
+        # Separate class 0 and class 1
+        class_0_indices = np.where(binary_labels_flat == 0)[0]
+        class_1_indices = np.where(binary_labels_flat == 1)[0]
+
+        # Keep all samples from class 1 and randomly sample from class 0
+        num_class_1 = len(class_1_indices)
+        sampled_class_0_indices = np.random.choice(class_0_indices, num_class_1, replace=False)
+
+        # Combine the indices of class 1 and the sampled class 0
+        undersampled_indices = np.concatenate([class_1_indices, sampled_class_0_indices])
+
+        # Select undersampled data
+        X_res = all_samples[undersampled_indices]
+        y_res_binary = binary_labels[undersampled_indices].cpu().numpy()
+        y_res_multiple = all_multiple_labels[undersampled_indices]
+
+        # Convert back to tensors
+        samples_tensor = torch.tensor(X_res, dtype=torch.float64).to(self.device)
+        binary_labels_tensor = torch.tensor(y_res_binary, dtype=torch.float32).to(self.device)
+        multiple_labels_tensor = torch.tensor(y_res_multiple, dtype=torch.float32).to(self.device)
+
+        print("undersampled shapes: ", samples_tensor.shape, binary_labels_tensor.shape, multiple_labels_tensor.shape)
+
+        return samples_tensor, binary_labels_tensor, multiple_labels_tensor
+    
+    def apply_oversampling_and_undersampling(self, samples, binary_labels, multiple_labels, target_size):
+        # Assuming binary_labels is one-hot encoded, convert it to class indices
+        binary_labels_flat = binary_labels.argmax(dim=1).cpu().numpy()  # Get the class indices from one-hot encoding
+
+        # Convert the samples and multiple_labels to numpy for manipulation
+        all_samples = samples.cpu().numpy()
+        all_multiple_labels = multiple_labels.cpu().numpy()
+
+        # Separate class 0 and class 1
+        class_0_indices = np.where(binary_labels_flat == 0)[0]
+        class_1_indices = np.where(binary_labels_flat == 1)[0]
+
+        # Oversample class 1 to target_size
+        if len(class_1_indices) < target_size:
+            # If there are fewer instances than target_size, we can replicate some instances
+            oversampled_class_1_indices = np.random.choice(class_1_indices, target_size, replace=True)
+        else:
+            print("WARNING: target size for oversampling is smaller than actual size")
+            # Otherwise, randomly select target_size instances from class 1
+            oversampled_class_1_indices = np.random.choice(class_1_indices, target_size, replace=False)
+
+        # Undersample class 0 to target_size
+        if len(class_0_indices) > target_size:
+            sampled_class_0_indices = np.random.choice(class_0_indices, target_size, replace=False)
+        else:
+            # If there are fewer instances than target_size, keep all instances
+            sampled_class_0_indices = class_0_indices
+
+        # Combine the indices of oversampled class 1 and undersampled class 0
+        balanced_indices = np.concatenate([oversampled_class_1_indices, sampled_class_0_indices])
+
+        # Select balanced data
+        X_balanced = all_samples[balanced_indices]
+        y_balanced_binary = binary_labels[balanced_indices].cpu().numpy()
+        y_balanced_multiple = all_multiple_labels[balanced_indices]
+
+        # Convert back to tensors
+        samples_tensor = torch.tensor(X_balanced, dtype=torch.float64).to(samples.device)
+        binary_labels_tensor = torch.tensor(y_balanced_binary, dtype=torch.float32).to(samples.device)
+        multiple_labels_tensor = torch.tensor(y_balanced_multiple, dtype=torch.float32).to(samples.device)
+
+        print("Balanced shapes: ", samples_tensor.shape, binary_labels_tensor.shape, multiple_labels_tensor.shape)
+
+        return samples_tensor, binary_labels_tensor, multiple_labels_tensor
+    
+
+    def apply_oversampling_and_undersampling_comp(self, samples, binary_labels, multiple_labels, target_size):
+        # Assuming binary_labels is one-hot encoded, convert it to class indices
+        binary_labels_flat = binary_labels.argmax(dim=1).cpu().numpy()  # Get the class indices from one-hot encoding
+
+        # Convert the samples and multiple_labels to numpy for manipulation
+        all_samples = samples.cpu().numpy()
+        multiple_labels_flat = multiple_labels.argmax(dim=1).cpu().numpy()
+
+        # Get indices for class 1
+        oversampled_indices = list(np.where(binary_labels_flat == 1)[0])
+
+        # Calculate how many more samples are needed to reach target_size
+        num_class_1 = len(oversampled_indices)
+        print("len num class 1", num_class_1)
+        remaining_needed = target_size - num_class_1
+        print("remaining", remaining_needed)
+
+        if remaining_needed > 0:
+            # Get indices for multiple_labels == 2 or multiple_labels == 3
+            indices_multiple_2 = np.where(multiple_labels_flat == 2)[0]
+            indices_multiple_3 = np.where(multiple_labels_flat == 3)[0]
+
+            # Combine indices where multiple_labels are 2 or 3
+            combined_indices = np.concatenate([indices_multiple_2, indices_multiple_3])
+
+            # Randomly sample from these indices
+            sampled_additional_indices = np.random.choice(combined_indices, remaining_needed, replace=True)
+
+            # Add these additional indices to the oversampled set
+            oversampled_indices.extend(sampled_additional_indices)
+            print("oversampled size: ", len(oversampled_indices))
+
+        # Undersample class 0 to target_size
+        class_0_indices = np.where(binary_labels_flat == 0)[0]
+        sampled_class_0_indices = np.random.choice(class_0_indices, target_size, replace=False)
+
+        # Combine the indices of oversampled class 1 and undersampled class 0
+        balanced_indices = np.concatenate([list(oversampled_indices), sampled_class_0_indices])
+
+        # Select balanced data
+        X_balanced = all_samples[balanced_indices]
+        y_balanced_binary = binary_labels[balanced_indices].cpu().numpy()
+        y_balanced_multiple = multiple_labels[balanced_indices].cpu().numpy()
+
+        # Convert back to tensors
+        samples_tensor = torch.tensor(X_balanced, dtype=torch.float64).to(samples.device)
+        binary_labels_tensor = torch.tensor(y_balanced_binary, dtype=torch.float32).to(samples.device)
+        multiple_labels_tensor = torch.tensor(y_balanced_multiple, dtype=torch.float32).to(samples.device)
+
+        print("Balanced shapes: ", samples_tensor.shape, binary_labels_tensor.shape, multiple_labels_tensor.shape)
+
+        return samples_tensor, binary_labels_tensor, multiple_labels_tensor
+    
+
+    def apply_oversampling_and_undersampling_comp_up_down(self, samples, binary_labels, multiple_labels, upsample_count, downsample_count):
+        # Assuming binary_labels is one-hot encoded, convert it to class indices
+        binary_labels_flat = binary_labels.argmax(dim=1).cpu().numpy()  # Get the class indices from one-hot encoding
+
+        # Convert the samples and multiple_labels to numpy for manipulation
+        all_samples = samples.cpu().numpy()
+        multiple_labels_flat = multiple_labels.argmax(dim=1).cpu().numpy()
+
+        # Get indices for class 1
+        oversampled_indices = list(np.where(binary_labels_flat == 1)[0])
+
+        # Calculate how many more samples are needed to reach the specified upsample_count
+        num_class_1 = len(oversampled_indices)
+        remaining_needed = upsample_count - num_class_1
+
+        if remaining_needed > 0:
+            # Get indices for multiple_labels == 2 or multiple_labels == 3
+            indices_multiple_2 = np.where(multiple_labels_flat == 2)[0]
+            indices_multiple_3 = np.where(multiple_labels_flat == 3)[0]
+
+            # Combine indices where multiple_labels are 2 or 3
+            combined_indices = np.concatenate([indices_multiple_2, indices_multiple_3])
+
+            # Randomly sample from these indices
+            sampled_additional_indices = np.random.choice(combined_indices, remaining_needed, replace=True)
+
+            # Add these additional indices to the oversampled set
+            oversampled_indices.extend(sampled_additional_indices)
+        print("class1 count", len(oversampled_indices))
+        # Undersample class 0 to downsample_count
+        class_0_indices = np.where(binary_labels_flat == 0)[0]
+        if len(class_0_indices) > downsample_count:
+            sampled_class_0_indices = np.random.choice(class_0_indices, downsample_count, replace=False)
+        else:
+            sampled_class_0_indices = class_0_indices  # Keep all if fewer than downsample_count
+        print("class0 count", len(sampled_class_0_indices))
+        # Combine the indices of oversampled class 1 and undersampled class 0
+        balanced_indices = np.concatenate([list(oversampled_indices), sampled_class_0_indices])
+
+        # Select balanced data
+        X_balanced = all_samples[balanced_indices]
+        y_balanced_binary = binary_labels[balanced_indices].cpu().numpy()
+        y_balanced_multiple = multiple_labels[balanced_indices].cpu().numpy()
+
+        # Convert back to tensors
+        samples_tensor = torch.tensor(X_balanced, dtype=torch.float64).to(samples.device)
+        binary_labels_tensor = torch.tensor(y_balanced_binary, dtype=torch.float32).to(samples.device)
+        multiple_labels_tensor = torch.tensor(y_balanced_multiple, dtype=torch.float32).to(samples.device)
+
+        print("Balanced shapes: ", samples_tensor.shape, binary_labels_tensor.shape, multiple_labels_tensor.shape)
+
+        return samples_tensor, binary_labels_tensor, multiple_labels_tensor
+
+
+
+    def apply_clustered_undersampling(self, samples, binary_labels, multiple_labels, num_clusters=10):
+        # Assuming binary_labels is one-hot encoded, convert it to class indices
+        binary_labels_flat = binary_labels.argmax(dim=1).cpu().numpy()
+
+        # Convert the samples and multiple_labels to numpy for manipulation
+        all_samples = samples.squeeze(1).cpu().numpy()
+        all_multiple_labels = multiple_labels.cpu().numpy()
+
+        # Separate class 0 and class 1
+        class_0_indices = np.where(binary_labels_flat == 0)[0]
+        class_1_indices = np.where(binary_labels_flat == 1)[0]
+
+        # Get class 1 samples
+        class_1_samples = all_samples[class_1_indices]
+
+        # Clustering class 0 samples
+        class_0_samples = all_samples[class_0_indices]
+        kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+        kmeans.fit(class_0_samples)
+
+        # For each cluster, get the indices of the samples that belong to that cluster
+        cluster_indices = {}
+        for cluster_id in range(num_clusters):
+            cluster_indices[cluster_id] = np.where(kmeans.labels_ == cluster_id)[0]
+
+        # Sample from each cluster
+        sampled_class_0_indices = []
+        samples_per_cluster = len(class_1_indices) // num_clusters  # Determine how many samples to take from each cluster
+
+        for cluster_id, indices in cluster_indices.items():
+            if len(indices) > samples_per_cluster:  # Ensure we don't sample more than available
+                sampled_from_cluster = np.random.choice(indices, samples_per_cluster, replace=False)
+            else:
+                sampled_from_cluster = indices  # If there are fewer samples than requested, take all
+            sampled_class_0_indices.extend(class_0_indices[sampled_from_cluster])
+
+        # Combine the indices of class 1 and the sampled class 0
+        undersampled_indices = np.concatenate([class_1_indices, sampled_class_0_indices])
+
+        # Select undersampled data
+        all_samples = np.expand_dims(all_samples, axis=1) 
+        X_res = all_samples[undersampled_indices]
+        y_res_binary = binary_labels[undersampled_indices].cpu().numpy()
+        y_res_multiple = all_multiple_labels[undersampled_indices]
+
+        # Convert back to tensors
+        samples_tensor = torch.tensor(X_res, dtype=torch.float64).to(self.device)
+        binary_labels_tensor = torch.tensor(y_res_binary, dtype=torch.float32).to(self.device)
+        multiple_labels_tensor = torch.tensor(y_res_multiple, dtype=torch.float32).to(self.device)
+
+        print("undersampled shapes: ", samples_tensor.shape, binary_labels_tensor.shape, multiple_labels_tensor.shape)
+
+        return samples_tensor, binary_labels_tensor, multiple_labels_tensor
+
+
+
     
     def write_samples_and_labels_into_file(self, file_path):
         full_path = os.path.join('../data', file_path)

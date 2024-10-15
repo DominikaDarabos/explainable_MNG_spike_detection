@@ -5,6 +5,11 @@ from data_handling import *
 from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix, roc_auc_score
 from collections import Counter
 from sklearn.metrics import precision_recall_curve
+from focal_loss import *
+
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.autograd import Variable
 
 from torch.utils.tensorboard import SummaryWriter
 writer = SummaryWriter(log_dir="runs/tensorboard")
@@ -28,18 +33,21 @@ def train(model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, \
         total_number = 0
         all_labels = []
         all_predictions = []
+        total_true_positives = 0
+        total_false_positives = 0
+        total_false_negatives = 0
         for data in data_loader:
             x, labels, _ = data
             optimizer.zero_grad()
             outputs = model(x)
+            # print("model output shapes: ", outputs[0].shape, labels.shape, classes.shape, _.shape)
             loss = criterion(outputs, labels)
             
-
+            classes = labels.argmax(dim=-1)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
             
-            classes = labels.argmax(dim=-1)
             y = outputs[0] if isinstance(outputs, tuple) else outputs
             y_classes = y.argmax(dim=-1)
             total_accuracy += (classes == y_classes).sum().item()
@@ -73,6 +81,7 @@ def test(model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, \
         total_number = 0
         all_labels = []
         all_predictions = []
+        all_probabilities = []
         for data in data_loader:
             x, labels, _ = data
             outputs = model(x)
@@ -86,14 +95,18 @@ def test(model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, \
             total_number += labels.size(0)
 
             all_labels.append(classes.cpu())
-            all_predictions.append(y_classes.cpu()) 
+            all_predictions.append(y_classes.cpu())
+            all_probabilities.append(y.cpu())
 
         all_labels = torch.cat(all_labels)
         all_predictions = torch.cat(all_predictions)
+        all_probabilities = torch.cat(all_probabilities)
 
         total_accuracy /= total_number / 100
+        print("=" * 40)
         print(f'Val accuracy: {total_accuracy:.2f}%, loss: {total_loss:.4f}')
-        return total_accuracy, total_loss, all_labels, all_predictions
+        print("=" * 80)
+        return total_accuracy, total_loss, all_labels, all_predictions, all_probabilities
 
 def compute_metrics(y_true, y_pred):
     # Convert tensors to NumPy arrays if necessary
@@ -111,111 +124,121 @@ def compute_metrics(y_true, y_pred):
     # ROC-AUC
     roc_auc = roc_auc_score(y_true, y_pred)
     
-    print(f'Precision: {precision:.4f}')
-    print(f'Recall: {recall:.4f}')
-    print(f'F1-Score: {f1:.4f}')
-    print(f'Confusion Matrix:\n{conf_matrix}')  # TN FP
-                                                # FN TP
-    print(f'ROC-AUC: {roc_auc:.4f}')
+    #print(f'Precision: {precision:.4f}')
+    #print(f'Recall: {recall:.4f}')
+    #print(f'F1-Score: {f1:.4f}')
+    #print(f'Confusion Matrix:\n{conf_matrix}')  # TN FP
+    #                                            # FN TP
+    #print(f'ROC-AUC: {roc_auc:.4f}')
+    # Print metrics in a structured format
+    print("=" * 40)
+    print("           MODEL METRICS          ")
+    print("=" * 40)
+    print(f"Precision : {precision:.4f}")
+    print(f"Recall    : {recall:.4f}")
+    print(f"F1-Score  : {f1:.4f}")
+    print("=" * 40)
+    print("       CONFUSION MATRIX           ")
+    print("=" * 40)
+    print(f"              Predicted")
+    print(f"          {conf_matrix[0][0]}    {conf_matrix[0][1]}")
+    print(f"Actual    {conf_matrix[1][0]}    {conf_matrix[1][1]}")
+    print("=" * 40)
+    print(f"ROC-AUC   : {roc_auc:.4f}")
+    print("=" * 40)
 
 def full_training():
-    batch_size = 256
-    epoch = 3
+    epoch = 10
     lr = 0.01
     dtype = torch.float64
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-
-    # search
-    #window_range = np.linspace(20, 50, 5)
-    #overlapping_range = np.linspace(10, 40, 5)
-    window_range = [48]
-    overlapping_range = [36]
-
-    good_params = []
-    bad_params = []
+    window_range = [20]
+    overlapping_range = [15]
 
     for i in range(len(window_range)):
         window_size_ = int(window_range[i])
         overlapping_size_ = int(overlapping_range[i])
-        try:
-            dataSet = NeurographyDataset()
-            #dataSet.generate_raw_windows(window_size=window_size_, overlapping=overlapping_size_)
-            #dataSet.generate_labels()
-            #dataSet.write_samples_and_labels_into_file(f'window_{window_size_}_overlap_{overlapping_size_}.pkl')
-
-            #dataSet.plot_raw_data_window_by_label(0, 5)
-            #dataSet.plot_raw_data_window_by_label(1, 5)
-            #dataSet.plot_raw_data_window_by_label(2, 5)
-            #dataSet.plot_raw_data_window_by_label(3, 5)
-
+        print("PARAMS: ", window_size_, overlapping_size_)
+        dataSet = NeurographyDataset()
+        path = f'window_{window_size_}_overlap_{overlapping_size_}.pkl'
+        full_path = os.path.join('../data', path)
+        if os.path.exists(full_path):
             dataSet.load_samples_and_labels_from_file(f'window_{window_size_}_overlap_{overlapping_size_}.pkl')
-            train_loader, val_loader, test_loader = dataSet.random_split_binary_and_multiple_dataloader()
-            print("Multiple labels unique count: ", dataSet.multiple_labels.unique(return_counts=True))
+        else:
+            print("Generating the dataset")
+            dataSet.generate_raw_windows(window_size=window_size_, overlapping=overlapping_size_)
+            dataSet.generate_labels()
+            dataSet.write_samples_and_labels_into_file(f'window_{window_size_}_overlap_{overlapping_size_}.pkl')
 
-            # torch.use_deterministic_algorithms(True, warn_only=True)
-            if torch.cuda.is_available():
-                torch.backends.cudnn.benchmark = False
-            torch.manual_seed(0)
-            random.seed(0)
-            np.random.seed(0)
+        #dataSet.plot_raw_data_window_by_label(0, 5)
+        #dataSet.plot_raw_data_window_by_label(1, 5)
+        #dataSet.plot_raw_data_window_by_label(2, 5)
+        #dataSet.plot_raw_data_window_by_label(3, 5)
+        
+        #train_loader, val_loader, test_loader = dataSet.random_split_binary_and_multiple_dataloader()
+        train_loader, val_loader, test_loader, train_loader_under, val_loader_under = dataSet.random_split_undersampling()
+        #print("Multiple labels unique count: ", dataSet.multiple_labels.unique(return_counts=True))
 
-            #samples0, labels0 = train_dataset[0]
-            n_channels, n_in = dataSet.samples[0].shape
-            n_out = len(dataSet.binary_labels_onehot[0])
-            hidden1 = 3
-            weight_num = 2
-            affin = torch.tensor([6 / n_in, -0.3606]).tolist()
-            #affin = torch.tensor([6 / n_in, -0.3606]).tolist()  #semioptimal
-            weight = ((torch.rand(weight_num)-0.5)*8).tolist()
-            #weight = [3]
+        # torch.use_deterministic_algorithms(True, warn_only=True)
+        if torch.cuda.is_available():
+            torch.backends.cudnn.benchmark = False
+        torch.manual_seed(0)
+        random.seed(0)
+        np.random.seed(0)
 
-            #model = VPNet(n_in, n_channels, 4, VPTypes.FEATURES, [0.1, 0], HermiteSystem(n_in, 4), [16], n_out, device=device, dtype=dtype)
+        n_channels, n_in = dataSet.samples[0].shape
+        n_out = len(dataSet.binary_labels_onehot[0])
+        hidden1 = 3
+        weight_num = 2
+        affin = torch.tensor([6 / n_in, -0.3606]).tolist()
+        #affin = torch.tensor([6 / n_in, -0.3606]).tolist()  #semioptimal
+        weight = ((torch.rand(weight_num)-0.5)*8).tolist()
 
-            #criterion = VPLoss(torch.nn.CrossEntropyLoss(), 0.1)
+        #model = VPNet(n_in, n_channels, 4, VPTypes.FEATURES, [0.1, 0], HermiteSystem(n_in, 4), [16], n_out, device=device, dtype=dtype)
+        criterion = VPLoss(torch.nn.CrossEntropyLoss(), 0.1)
 
-            model = VPNet(n_in, n_channels, hidden1, VPTypes.FEATURES, affin + weight, WeightedHermiteSystem(n_in, hidden1, weight_num), [hidden1], n_out, device=device, dtype=dtype)
-            class_counts = Counter(dataSet.binary_labels.numpy())  # Replace with your actual label tensor or array
+        model = VPNet(n_in, n_channels, hidden1, VPTypes.FEATURES, affin + weight, WeightedHermiteSystem(n_in, hidden1, weight_num), [hidden1], n_out, device=device, dtype=dtype)
+        total_count = dataSet.binary_labels.size(0)
+        class_0_count = (dataSet.binary_labels == 0).sum().item()
+        class_1_count = (dataSet.binary_labels == 1).sum().item()
+        #for BCELoss
+        #weights_tensor = torch.tensor([total_count / (class_0_count * 2), total_count / (class_1_count * 2)]).to(device)
+        #for CrossEntrophy
+        #weights_tensor = torch.tensor([total_count / class_0_count, total_count / class_1_count]).to(device)
+        class_weights = torch.tensor([0.2, 0.8]).to(device)
+        weighted_criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
+        criterion = VPLoss(weighted_criterion, 0.1)
 
-            # Total number of samples
-            total_samples = sum(class_counts.values())
+        #focal = FocalLoss(gamma=5, alpha=[0.04, 0.96], size_average=True)
 
-            # Compute class weights
-            class_weights = {cls: total_samples / count for cls, count in class_counts.items()}
-            print("loss weights: ", class_weights)
-            total_weight = class_weights[0] + class_weights[1]
-
-            # Convert to a tensor (order must match class indices)
-            weights_tensor = torch.tensor([class_weights[0] / total_weight, class_weights[1] / total_weight]).to(device)
-
-            
-            #class_weights = torch.tensor([0.01, 0.99]).to(device)
-            weighted_criterion = torch.nn.CrossEntropyLoss(weight=weights_tensor)
-            criterion = VPLoss(weighted_criterion, 0.1)
-
-            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-            train(model, train_loader, epoch, optimizer, criterion)
-            writer.flush()
-            if isinstance(model, VPNet):
-                print(*list(model.vp_layer.parameters()))
-            val_accuracy, val_loss, test_labels, test_predictions = test(model, val_loader, criterion)
-            print("Validation  metrics:")
-            compute_metrics(test_labels, test_predictions)
-            # TESTING
-            # test_accuracy, test_loss = test(model, test_loader, criterion)
-            print()
-            good_params.append((window_size_, overlapping_size_))
-        except Exception as e:
-            bad_params.append((window_size_, overlapping_size_))
-    print("Bad parameters: ", bad_params)
-    print("Good parameters: ", good_params)
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        #train(model, train_loader, epoch, optimizer, criterion)
+        train(model, train_loader_under, epoch, optimizer, criterion)
+        writer.flush()
+        if isinstance(model, VPNet):
+            print(*list(model.vp_layer.parameters()))
+        #val_accuracy, val_loss, test_labels, test_predictions, test_probabilities = test(model, val_loader, criterion)
+        val_accuracy, val_loss, test_labels, test_predictions, test_probabilities = test(model, val_loader_under, criterion)
+        print("VALIDATION:")
+        compute_metrics(test_labels, test_predictions)
+        class_weights = torch.tensor([0.003, 0.997]).to(device)
+        weighted_criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
+        criterion = VPLoss(weighted_criterion, 0.1)
+        val_accuracy, val_loss, test_labels, test_predictions, test_probabilities = test(model, val_loader, criterion)
+        print("VALIDATION ON ORIGINAL:")
+        compute_metrics(test_labels, test_predictions)
+        # TESTING
+        # test_accuracy, test_loss = test(model, test_loader, criterion)
+        print()
+        #torch.save(model.state_dict(), f'trained_models/widnow_{window_size_}_overlapping_{overlapping_size_}_hidden_{hidden1}_nweight_{weight_num}_id_1')
 
 if __name__ == '__main__':
-    dataSet = NeurographyDataset()
-    #dataSet.load_samples_and_labels_from_file(f'window_{window_size_}_overlap_{overlapping_size_}.pkl')
+    #dataSet = NeurographyDataset()
+    #dataSet.load_samples_and_labels_from_file(f'window_30_overlap_22.pkl')
     #dataSet.generate_raw_windows(window_size=48, overlapping=36)
     #dataSet.generate_labels()
     #dataSet.write_samples_and_labels_into_file('window_48_overlap_36.pkl')
-    #dataSet.load_samples_and_labels_from_file('window_48_overlap_36.pkl')
+    #dataSet.load_samples_and_labels_from_file('window_25_overlap_15.pkl')
     #train_loader, val_loader, test_loader = dataSet.random_split_binary_and_multiple_dataloader()
     #print("unique count: ", dataSet.multiple_labels.unique(return_counts=True))
     #dataSet.get_statistics_of_spikes()
