@@ -3,14 +3,12 @@ from typing import Callable
 import torch
 from data_handling import *
 from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix, roc_auc_score
-from collections import Counter
 from sklearn.metrics import precision_recall_curve
 from focal_loss import *
-
+import seaborn as sns
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-
 from torch.utils.tensorboard import SummaryWriter
 # writer = SummaryWriter(log_dir="runs/tensorboard")
 
@@ -114,7 +112,7 @@ def test(model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, \
         print("=" * 40)
         compare_predictions_to_multilabels(all_binary_labels, all_multiple_labels, all_predictions)
         print("=" * 40)
-        probability_statistics(all_binary_labels, all_multiple_labels, all_predictions, all_probabilities)
+        probability_statistics_(all_binary_labels, all_multiple_labels, all_predictions, all_probabilities)
 
         total_accuracy /= total_number / 100
         print("=" * 40)
@@ -222,6 +220,77 @@ def probability_statistics(all_binary_labels, all_multiple_labels, all_predictio
     plt.tight_layout()
     plt.show()
 
+
+
+def probability_statistics_(all_binary_labels, all_multiple_labels, all_predictions, all_probabilities):
+    binary_labels_np = all_binary_labels.cpu().numpy()
+    predictions_np = all_predictions.cpu().numpy()
+    
+    # Check the shape of all_multiple_labels
+    all_multiple_labels_np = all_multiple_labels.cpu().numpy()
+    print(f"Shape of all_multiple_labels: {all_multiple_labels_np.shape}")
+
+    probabilities_np_0 = all_probabilities[:, 0].cpu().numpy()  # Extract probabilities for class 0
+    probabilities_np_1 = all_probabilities[:, 1].cpu().numpy()  # Extract probabilities for class 1
+
+    # Initialize containers for statistics for each label
+    num_labels = 4
+    stats = {f'Label {i}': {
+        'True Positives': [],
+        'False Positives': [],
+        'True Negatives': [],
+        'False Negatives': [],
+    } for i in range(num_labels)}
+
+    # Iterate through all samples and classify them into TP, FP, TN, FN for each label
+    for i in range(len(binary_labels_np)):
+        true_label = all_multiple_labels_np[i]  # Multi-label true labels for this sample
+        pred_label = predictions_np[i]
+        prob = probabilities_np_1[i]
+
+        for label_index in range(num_labels):
+            # True Positives (TP)
+            if label_index == 0:
+                if true_label == label_index and pred_label == 0:
+                    stats[f'Label {label_index}']['True Negatives'].append(prob)
+                
+                # False Positives (FP)
+                elif true_label == label_index and pred_label == 1:
+                    stats[f'Label {label_index}']['False Positives'].append(prob)
+                    
+            else:
+                if true_label == label_index and pred_label == 1:
+                    stats[f'Label {label_index}']['True Positives'].append(prob)
+                
+                # False Negatives (FN)
+                elif true_label == label_index and pred_label == 0:
+                    stats[f'Label {label_index}']['False Negatives'].append(prob)
+    data = []
+    labels = []
+    # Calculate and print statistics for each label
+    for label_index in range(num_labels):
+        for category in stats[f'Label {label_index}']:
+            if len(stats[f'Label {label_index}'][category]) > 0:
+                # print(f"\nStatistics for Label {label_index} - {category}:")
+                # probs_tensor = torch.tensor(stats[f'Label {label_index}'][category])
+                # print(f"Min: {probs_tensor.min():.4f}")
+                # print(f"Max: {probs_tensor.max():.4f}")
+                # print(f"mean: {probs_tensor.mean():.4f}")
+                # print(f"median: {probs_tensor.median():.4f}")
+                # print(f"Std Dev: {probs_tensor.std():.4f}")
+                data.extend(stats[f'Label {label_index}'][category])
+                labels.extend([f'Label {label_index} - {category}'] * len(stats[f'Label {label_index}'][category]))
+    
+    plt.figure(figsize=(12, 8))
+    sns.boxplot(x=labels, y=data)
+    plt.xticks(rotation=90)
+    plt.title("Boxplot of Probabilities for Each Label and Category")
+    plt.ylabel("Probability")
+    plt.xlabel("Categories")
+    plt.tight_layout()
+    plt.show()
+
+
 def compute_metrics(y_true, y_pred):
     # Convert tensors to NumPy arrays if necessary
     y_true = y_true.cpu().numpy()
@@ -262,7 +331,7 @@ def compute_metrics(y_true, y_pred):
     print("=" * 40)
 
 def full_training():
-    decision_boundary = 0.95
+    decision_boundary = 0.8
     epoch = 10
     lr = 0.01
     dtype = torch.float64
@@ -275,23 +344,44 @@ def full_training():
         overlapping_size_ = int(overlapping_range[i])
         print("PARAMS: ", window_size_, overlapping_size_)
         dataSet = NeurographyDataset()
-        path = f'window_{window_size_}_overlap_{overlapping_size_}.pkl'
+        path = f'window_{window_size_}_overlap_{overlapping_size_}_corrected.pkl'
         full_path = os.path.join('../data', path)
         if os.path.exists(full_path):
-            dataSet.load_samples_and_labels_from_file(f'window_{window_size_}_overlap_{overlapping_size_}.pkl')
+            print("Loading the dataset")
+            dataSet.load_samples_and_labels_from_file(path)
         else:
             print("Generating the dataset")
             dataSet.generate_raw_windows(window_size=window_size_, overlapping=overlapping_size_)
             dataSet.generate_labels()
+            #dataSet.generate_labels_wo_stimuli()
             dataSet.write_samples_and_labels_into_file(f'window_{window_size_}_overlap_{overlapping_size_}.pkl')
-
         # dataSet.plot_raw_data_window_by_label(0, 5)
         # dataSet.plot_raw_data_window_by_label(1, 5)
         # dataSet.plot_raw_data_window_by_label(2, 5)
         # dataSet.plot_raw_data_window_by_label(3, 5)
-        
-        #train_loader, val_loader, test_loader = dataSet.random_split_binary_and_multiple_dataloader()
+
+        # dataSet.generate_labels_wo_stimuli()
+        # dataSet.write_samples_and_labels_into_file(f'window_{window_size_}_overlap_{overlapping_size_}_corrected.pkl')
         train_loader, val_loader, test_loader, train_loader_under, val_loader_under = dataSet.random_split_undersampling()
+        multiple_labels = np.array(dataSet.multiple_labels)
+        raw_data_windows = np.array(dataSet.raw_data_windows)
+        labels_of_interest = [0, 1, 2, 3]
+        # Loop over each label and calculate the min and max values
+        for label in labels_of_interest:
+            # Filter windows where the current label matches
+            label_filter = multiple_labels == label
+            filtered_windows = raw_data_windows[label_filter]
+            
+            if filtered_windows.size > 0:
+                # Calculate the overall min and max for the filtered windows
+                overall_min = np.min(filtered_windows)  # Overall min across all windows
+                overall_max = np.max(filtered_windows)  # Overall max across all windows
+                
+                # Print the results for the current label
+                print(f"Label {label}: Overall Min = {overall_min}, Overall Max = {overall_max}")
+            else:
+                print(f"No windows found for label {label}.")
+        
         #print("Multiple labels unique count: ", dataSet.multiple_labels.unique(return_counts=True))
 
         # torch.use_deterministic_algorithms(True, warn_only=True)
@@ -320,7 +410,7 @@ def full_training():
         #weights_tensor = torch.tensor([total_count / (class_0_count * 2), total_count / (class_1_count * 2)]).to(device)
         #for CrossEntrophy
         #weights_tensor = torch.tensor([total_count / class_0_count, total_count / class_1_count]).to(device)
-        class_weights = torch.tensor([0.15, 0.85]).to(device)
+        class_weights = torch.tensor([0.3, 0.7]).to(device)
         print("loss weights: ", class_weights)
         weighted_criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
         criterion = VPLoss(weighted_criterion, 0.1)
@@ -334,9 +424,9 @@ def full_training():
         if isinstance(model, VPNet):
             print(*list(model.vp_layer.parameters()))
         #val_accuracy, val_loss, test_labels, test_predictions, test_probabilities = test(model, val_loader, criterion)
-        val_accuracy, val_loss, test_labels, test_predictions, test_probabilities = test(model, val_loader_under, criterion, decision_boundary)
-        print("VALIDATION:")
-        compute_metrics(test_labels, test_predictions)
+        # val_accuracy, val_loss, test_labels, test_predictions, test_probabilities = test(model, val_loader_under, criterion, decision_boundary)
+        # print("VALIDATION:")
+        # compute_metrics(test_labels, test_predictions)
         class_weights = torch.tensor([0.003, 0.997]).to(device)
         weighted_criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
         criterion = VPLoss(weighted_criterion, 0.1)
@@ -346,14 +436,15 @@ def full_training():
         # TESTING
         # test_accuracy, test_loss = test(model, test_loader, criterion)
         print()
-        #torch.save(model.state_dict(), f'trained_models/widnow_{window_size_}_overlapping_{overlapping_size_}_hidden_{hidden1}_nweight_{weight_num}_id_1')
+        torch.save(model.state_dict(), f'trained_models/widnow_{window_size_}_overlapping_{overlapping_size_}_hidden_{hidden1}_nweight_{weight_num}_id_2')
 
 if __name__ == '__main__':
     #dataSet = NeurographyDataset()
-    #dataSet.load_samples_and_labels_from_file(f'window_30_overlap_22.pkl')
-    #dataSet.generate_raw_windows(window_size=48, overlapping=36)
+    #dataSet.load_samples_and_labels_from_file(f'window_15_overlap_11.pkl')
+    #dataSet.generate_raw_windows(window_size=20, overlapping=15)
     #dataSet.generate_labels()
-    #dataSet.write_samples_and_labels_into_file('window_48_overlap_36.pkl')
+    #dataSet.generate_labels_wo_stimuli()
+    #dataSet.write_samples_and_labels_into_file('window_20_overlap_15_corrected.pkl')
     #dataSet.load_samples_and_labels_from_file('window_25_overlap_15.pkl')
     #train_loader, val_loader, test_loader = dataSet.random_split_binary_and_multiple_dataloader()
     #print("unique count: ", dataSet.multiple_labels.unique(return_counts=True))
@@ -362,6 +453,9 @@ if __name__ == '__main__':
     #dataSet.plot_raw_data_window_by_label(1, 5)
     #dataSet.plot_raw_data_window_by_label(2, 5)
     #dataSet.plot_raw_data_window_by_label(3, 5)
-
-    full_training()
+    #full_training()
     # writer.close()
+
+    dataSet = NeurographyDataset()
+    dataSet.load_samples_and_labels_from_file(f'window_15_overlap_11.pkl')
+    dataSet.generate_labels_wo_stimuli()

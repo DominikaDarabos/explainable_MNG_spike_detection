@@ -11,6 +11,7 @@ import pickle
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 from imblearn.under_sampling import RandomUnderSampler
 from sklearn.cluster import KMeans
+from collections import Counter
 
 
 class NeurographyDataset:
@@ -92,7 +93,15 @@ class NeurographyDataset:
         binary_labels_list = []
         multiple_labels_list = []
         for i, window in enumerate(self.raw_timestamps_windows):
-            matching_rows = self.all_differentiated_spikes[self.all_differentiated_spikes['ts'].isin(window)]
+            window_start = window[0]  # Start of the window
+            window_end = window[-1]    # End of the window
+            
+            # Find timestamps that fall within this range
+            matching_rows = self.all_differentiated_spikes[
+                (self.all_differentiated_spikes['ts'] >= window_start) & 
+                (self.all_differentiated_spikes['ts'] <= window_end)
+            ]
+            #matching_rows = self.all_differentiated_spikes[self.all_differentiated_spikes['ts'].isin(window)]
             
             if len(matching_rows) == 1:
                 multiple_labels_list.append(matching_rows['track'].values[0])
@@ -104,14 +113,105 @@ class NeurographyDataset:
                 multiple_labels_list.append(0)
                 binary_labels_list.append(0)
     
-        replacement_dict = {'X': 1, 'Track3': 2, 'Track4': 3}
-        filtered_list = [replacement_dict.get(item, item) for item in multiple_labels_list]
+        # replacement_dict = {'X': 1, 'Track3': 2, 'Track4': 3}
+        # filtered_list = [replacement_dict.get(item, item) for item in multiple_labels_list]
         self.binary_labels = torch.tensor(binary_labels_list, dtype=torch.int64)
-        self.multiple_labels = torch.tensor(filtered_list, dtype=torch.int64)
+        self.multiple_labels = torch.tensor(multiple_labels_list, dtype=torch.int64)
         binary_labels_onehot = self.one_hot_encode(self.binary_labels, len(torch.unique(self.binary_labels)))
         multiple_labels_onehot = self.one_hot_encode(self.multiple_labels, len(torch.unique(self.multiple_labels)))
         self.binary_labels_onehot = binary_labels_onehot.to(self.device).to(dtype=torch.float32)
         self.multiple_labels_onehot = multiple_labels_onehot.to(self.device).to(dtype=torch.float32)
+        value_counts = Counter(multiple_labels_list)
+
+        print("done multiple list counter: ", value_counts)
+
+
+    def generate_labels_wo_stimuli(self):
+        binary_labels_list = []
+        multiple_labels_list = []
+        counter_match_1_but_0 = 0
+        counter_match_0_but_1 = 0
+        counter_match_1_but_1 = 0
+        counter_no_stimulation = 0
+        counter_other_spike = 0
+        is_stimuli_but_not_last_two_track = 0
+        last_two_tracks = []
+        print("COUNTS", self.all_differentiated_spikes['track'].value_counts())
+
+        for i, (window, data_window) in enumerate(zip(self.raw_timestamps_windows, self.raw_data_windows)):
+            window_start = window[0]  # Start of the window
+            window_end = window[-1]    # End of the window
+            
+            # Find timestamps that fall within this range
+            matching_rows = self.all_differentiated_spikes[
+                (self.all_differentiated_spikes['ts'] >= window_start) & 
+                (self.all_differentiated_spikes['ts'] <= window_end)
+            ]
+            #is_stimulation = any(-10 >= value for value in data_window)
+            has_value_below_neg10 = any(value <= -10 for value in data_window)
+            has_value_above_9 = any(value >= 9.47 for value in data_window)
+            is_stimulation = has_value_below_neg10 or has_value_above_9
+            if len(matching_rows) == 1: #label 1 2 3
+                track_value = matching_rows['track'].values[0]
+                last_two_tracks.append(track_value)
+                if len(last_two_tracks) > 10:
+                    last_two_tracks.pop(0)
+                if track_value == 1 and is_stimulation:
+                    print("label 1 and stimulation values", i)
+                    counter_match_1_but_1 += 1
+                    multiple_labels_list.append(1)
+                    binary_labels_list.append(1)
+                elif track_value  == 1 and not is_stimulation:
+                    print("label 1 but no stimulation values", i)
+                    counter_match_1_but_0 += 1
+                    multiple_labels_list.append(0)
+                    binary_labels_list.append(0)
+                elif track_value  != 0:
+                    multiple_labels_list.append(track_value )
+                    binary_labels_list.append(1)
+                    counter_other_spike += 1
+                if track_value != 0 and track_value != 1 and is_stimulation:
+                    print("STIMULATION BUT OTHER SPIKE")
+            elif len(matching_rows) > 1:
+                print("MORE SPIKE IN ONE WINDOW")
+                raise ValueError(f"{len(matching_rows)} timestamps matched in window {i} with details: {matching_rows}")
+            else: # label 0
+                last_two_tracks.append(0)
+                if len(last_two_tracks) > 10:
+                    last_two_tracks.pop(0)
+                if is_stimulation:
+                    print("label 0 but stimulation values: ", i)
+                    if 1 in last_two_tracks:
+                        counter_match_0_but_1 += 1
+                        multiple_labels_list.append(1)
+                        binary_labels_list.append(1)
+                    else:
+                        # Do not label as 1 since '1' not in last five 'track' values
+                        multiple_labels_list.append(0)
+                        binary_labels_list.append(0)
+                        is_stimuli_but_not_last_two_track += 1
+                else:
+                    multiple_labels_list.append(0)
+                    binary_labels_list.append(0)
+                    counter_no_stimulation += 1
+        
+        print("stimulation label but no stimulation: ", counter_match_1_but_0)
+        print("stimulation label and stimulation: ", counter_match_1_but_1)
+        print("no stimulation label but stimulation: ", counter_match_0_but_1)
+        print("no stimulation label and no stimulation: ", counter_no_stimulation)
+        print("is stimulus, but stimulus ts is not in the last 2 track: ", is_stimuli_but_not_last_two_track)
+        print("other spike:", counter_other_spike)
+        value_counts = Counter(multiple_labels_list)
+
+        print("done multiple list counter: ", value_counts)
+
+        self.binary_labels = torch.tensor(binary_labels_list, dtype=torch.int64)
+        self.multiple_labels = torch.tensor(multiple_labels_list, dtype=torch.int64)
+        binary_labels_onehot = self.one_hot_encode(self.binary_labels, 2)
+        multiple_labels_onehot = self.one_hot_encode(self.multiple_labels, 4)
+        self.binary_labels_onehot = binary_labels_onehot.to(self.device).to(dtype=torch.float32)
+        self.multiple_labels_onehot = multiple_labels_onehot.to(self.device).to(dtype=torch.float32)
+
 
     def random_split_binary_dataloader(self):
         if self.raw_data_windows is None or self.binary_labels is None:
@@ -322,11 +422,11 @@ class NeurographyDataset:
             combined_indices = np.concatenate([indices_multiple_2, indices_multiple_3])
             # Normalize the probabilities so they sum to 1
             
-            # probabilities = np.array([0.2 if i in indices_multiple_2 else 0.8 for i in combined_indices])
-            # probabilities /= probabilities.sum()
+            probabilities = np.array([0.2 if i in indices_multiple_2 else 0.8 for i in combined_indices])
+            probabilities /= probabilities.sum()
 
             # Randomly sample from combined_indices with higher probability for multiple_labels == 3
-            sampled_additional_indices = np.random.choice(combined_indices, remaining_needed, replace=True)
+            sampled_additional_indices = np.random.choice(combined_indices, remaining_needed, replace=True, p = probabilities)
 
             # Add these additional indices to the oversampled set
             oversampled_indices.extend(sampled_additional_indices)
