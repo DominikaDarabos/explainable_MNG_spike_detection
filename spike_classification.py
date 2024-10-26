@@ -9,8 +9,9 @@ import seaborn as sns
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from torch.utils.tensorboard import SummaryWriter
-# writer = SummaryWriter(log_dir="runs/tensorboard")
+from prototypical_loss import *
+import time
+start_time = time.time()
 
 module_path = os.path.abspath(os.path.join('..'))
 sys.path.append(module_path)
@@ -68,9 +69,6 @@ def train(model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, \
         total_accuracy /= total_number / 100
         avg_loss = total_loss / len(data_loader)
         accuracy = total_accuracy / total_number
-        # writer.add_pr_curve('Precision-Recall Curve', all_binary_labels, all_predictions, global_step=epoch)
-        # writer.add_scalar("Loss/epoch", avg_loss, epoch)
-        # writer.add_scalar("Accuracy/train", accuracy, epoch)
         print(f'Epoch: {epoch+1:0{n_digits}d} / {n_epoch}, accuracy: {total_accuracy:.2f}%, loss: {total_loss:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}')
 
 def test(model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, \
@@ -331,7 +329,7 @@ def compute_metrics(y_true, y_pred):
     print("=" * 40)
 
 def full_training():
-    decision_boundary = 0.8
+    decision_boundary = 0.5
     epoch = 10
     lr = 0.01
     dtype = torch.float64
@@ -352,17 +350,17 @@ def full_training():
         else:
             print("Generating the dataset")
             dataSet.generate_raw_windows(window_size=window_size_, overlapping=overlapping_size_)
-            dataSet.generate_labels()
-            #dataSet.generate_labels_wo_stimuli()
+            #dataSet.generate_labels()
+            dataSet.generate_labels_stimuli_relabel()
             dataSet.write_samples_and_labels_into_file(f'window_{window_size_}_overlap_{overlapping_size_}.pkl')
         # dataSet.plot_raw_data_window_by_label(0, 5)
         # dataSet.plot_raw_data_window_by_label(1, 5)
         # dataSet.plot_raw_data_window_by_label(2, 5)
         # dataSet.plot_raw_data_window_by_label(3, 5)
 
-        # dataSet.generate_labels_wo_stimuli()
+        # dataSet.generate_labels_stimuli_relabel()
         # dataSet.write_samples_and_labels_into_file(f'window_{window_size_}_overlap_{overlapping_size_}_corrected.pkl')
-        train_loader, val_loader, test_loader, train_loader_under, val_loader_under = dataSet.random_split_undersampling()
+        dataloaders = dataSet.random_split_undersampling()
         multiple_labels = np.array(dataSet.multiple_labels)
         raw_data_windows = np.array(dataSet.raw_data_windows)
         labels_of_interest = [0, 1, 2, 3]
@@ -419,8 +417,7 @@ def full_training():
 
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         #train(model, train_loader, epoch, optimizer, criterion)
-        train(model, train_loader_under, epoch, optimizer, criterion)
-        # writer.flush()
+        train(model, dataloaders['train_loader_under'], epoch, optimizer, criterion)
         if isinstance(model, VPNet):
             print(*list(model.vp_layer.parameters()))
         #val_accuracy, val_loss, test_labels, test_predictions, test_probabilities = test(model, val_loader, criterion)
@@ -430,7 +427,7 @@ def full_training():
         class_weights = torch.tensor([0.003, 0.997]).to(device)
         weighted_criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
         criterion = VPLoss(weighted_criterion, 0.1)
-        val_accuracy, val_loss, test_labels, test_predictions, test_probabilities = test(model, val_loader, criterion, decision_boundary)
+        val_accuracy, val_loss, test_labels, test_predictions, test_probabilities = test(model, dataloaders['val_loader'], criterion, decision_boundary)
         print("VALIDATION ON ORIGINAL:")
         compute_metrics(test_labels, test_predictions)
         # TESTING
@@ -453,9 +450,7 @@ if __name__ == '__main__':
     #dataSet.plot_raw_data_window_by_label(1, 5)
     #dataSet.plot_raw_data_window_by_label(2, 5)
     #dataSet.plot_raw_data_window_by_label(3, 5)
-    #full_training()
-    # writer.close()
-
-    dataSet = NeurographyDataset()
-    dataSet.load_samples_and_labels_from_file(f'window_15_overlap_11.pkl')
-    dataSet.generate_labels_wo_stimuli()
+    full_training()
+    end_time = time.time()  # Record end time
+    elapsed_time = end_time - start_time  # Calculate elapsed time
+    print(f"Elapsed time: {elapsed_time:.4f} seconds")

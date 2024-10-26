@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, TensorDataset, random_split
 import pickle
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-from imblearn.under_sampling import RandomUnderSampler
 from sklearn.cluster import KMeans
 from collections import Counter
 
@@ -126,7 +125,7 @@ class NeurographyDataset:
         print("done multiple list counter: ", value_counts)
 
 
-    def generate_labels_wo_stimuli(self):
+    def generate_labels_stimuli_relabel(self):
         binary_labels_list = []
         multiple_labels_list = []
         counter_match_1_but_0 = 0
@@ -157,12 +156,10 @@ class NeurographyDataset:
                 if len(last_two_tracks) > 10:
                     last_two_tracks.pop(0)
                 if track_value == 1 and is_stimulation:
-                    print("label 1 and stimulation values", i)
                     counter_match_1_but_1 += 1
                     multiple_labels_list.append(1)
                     binary_labels_list.append(1)
                 elif track_value  == 1 and not is_stimulation:
-                    print("label 1 but no stimulation values", i)
                     counter_match_1_but_0 += 1
                     multiple_labels_list.append(0)
                     binary_labels_list.append(0)
@@ -180,7 +177,6 @@ class NeurographyDataset:
                 if len(last_two_tracks) > 10:
                     last_two_tracks.pop(0)
                 if is_stimulation:
-                    print("label 0 but stimulation values: ", i)
                     if 1 in last_two_tracks:
                         counter_match_0_but_1 += 1
                         multiple_labels_list.append(1)
@@ -275,11 +271,31 @@ class NeurographyDataset:
         test_size = total_size - train_size - val_size  # Remaining for testing (20%)
 
         # Split indices for train, validation, and test
+        #torch.manual_seed(4)
+        # indices = torch.randperm(total_size)
+        # train_indices = indices[:train_size]
+        # val_indices = indices[train_size:train_size + val_size]
+        # test_indices = indices[train_size + val_size:]
+
+
+
+        indices = torch.arange(total_size)
+        train_indices = indices[:train_size]  # Keep as is
+        val_indices = indices[train_size:train_size + val_size]  # Keep as is
+        test_indices = indices[train_size + val_size:]  # Keep as is
+
+        # Change the random shuffling to only affect the training set
         torch.manual_seed(4)
-        indices = torch.randperm(total_size)
-        train_indices = indices[:train_size]
-        val_indices = indices[train_size:train_size + val_size]
-        test_indices = indices[train_size + val_size:]
+        train_indices = train_indices[torch.randperm(len(train_indices))]  # Shuffle only the training indices
+
+        # Use these shuffled indices to split the samples and labels
+        train_samples, val_samples, test_samples = self.samples[train_indices], self.samples[val_indices], self.samples[test_indices]
+        train_binary_labels, val_binary_labels, test_binary_labels = self.binary_labels_onehot[train_indices], self.binary_labels_onehot[val_indices], self.binary_labels_onehot[test_indices]
+        train_multiple_labels, val_multiple_labels, test_multiple_labels = self.multiple_labels_onehot[train_indices], self.multiple_labels_onehot[val_indices], self.multiple_labels_onehot[test_indices]
+
+        val_timestamps, test_timestamps = self.raw_timestamps_windows[val_indices], self.raw_timestamps_windows[test_indices]
+        print("val timestamps shape", val_timestamps.shape)
+        print("val_samples shape", val_samples.shape)
 
         # Split the samples and labels based on the indices
         train_samples, val_samples, test_samples = self.samples[train_indices], self.samples[val_indices], self.samples[test_indices]
@@ -308,9 +324,19 @@ class NeurographyDataset:
         val_loader_under = DataLoader(val_dataset_under, batch_size=1024, shuffle=False)
         test_loader = DataLoader(test_dataset, batch_size=1024, shuffle=False)
 
+        result = {
+        "train_loader": train_loader,
+        "val_loader": val_loader,
+        "test_loader": test_loader,
+        "train_loader_under": train_loader_under,
+        "val_loader_under": val_loader_under,
+        "val_timestamps": self.raw_timestamps_windows[val_indices],
+        "test_timestamps": self.raw_timestamps_windows[test_indices],
+        }
+
         print("Dataloaders are ready")
 
-        return train_loader, val_loader, test_loader, train_loader_under, val_loader_under
+        return result
 
 
     def apply_random_undersampling(self, samples, binary_labels, multiple_labels):
