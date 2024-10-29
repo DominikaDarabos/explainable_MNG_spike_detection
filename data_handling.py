@@ -134,7 +134,9 @@ class NeurographyDataset:
         counter_no_stimulation = 0
         counter_other_spike = 0
         is_stimuli_but_not_last_two_track = 0
-        last_two_tracks = []
+        last_X_tracks = []
+
+        last_X_track_num = 11
         print("COUNTS", self.all_differentiated_spikes['track'].value_counts())
 
         for i, (window, data_window) in enumerate(zip(self.raw_timestamps_windows, self.raw_data_windows)):
@@ -148,13 +150,13 @@ class NeurographyDataset:
             ]
             #is_stimulation = any(-10 >= value for value in data_window)
             has_value_below_neg10 = any(value <= -10 for value in data_window)
-            has_value_above_9 = any(value >= 9.47 for value in data_window)
-            is_stimulation = has_value_below_neg10 or has_value_above_9
+            has_value_above_9 = any(value >= 9 for value in data_window)
+            is_stimulation = has_value_below_neg10 and has_value_above_9
             if len(matching_rows) == 1: #label 1 2 3
                 track_value = matching_rows['track'].values[0]
-                last_two_tracks.append(track_value)
-                if len(last_two_tracks) > 10:
-                    last_two_tracks.pop(0)
+                last_X_tracks.append(track_value)
+                if len(last_X_tracks) > last_X_track_num:
+                    last_X_tracks.pop(0)
                 if track_value == 1 and is_stimulation:
                     counter_match_1_but_1 += 1
                     multiple_labels_list.append(1)
@@ -173,11 +175,11 @@ class NeurographyDataset:
                 print("MORE SPIKE IN ONE WINDOW")
                 raise ValueError(f"{len(matching_rows)} timestamps matched in window {i} with details: {matching_rows}")
             else: # label 0
-                last_two_tracks.append(0)
-                if len(last_two_tracks) > 10:
-                    last_two_tracks.pop(0)
+                last_X_tracks.append(0)
+                if len(last_X_tracks) > last_X_track_num:
+                    last_X_tracks.pop(0)
                 if is_stimulation:
-                    if 1 in last_two_tracks:
+                    if 1 in last_X_tracks:
                         counter_match_0_but_1 += 1
                         multiple_labels_list.append(1)
                         binary_labels_list.append(1)
@@ -257,7 +259,7 @@ class NeurographyDataset:
         return train_loader, val_loader, test_loader
 
 
-    def random_split_undersampling(self):
+    def sequential_split_with_resampling(self):
         if self.raw_data_windows is None or self.binary_labels is None or self.multiple_labels is None:
             print("First generate the raw windows and labels (binary and multiple).")
             return

@@ -7,9 +7,6 @@ from sklearn.metrics import precision_recall_curve
 from focal_loss import *
 import seaborn as sns
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-from prototypical_loss import *
 import time
 start_time = time.time()
 
@@ -329,7 +326,7 @@ def compute_metrics(y_true, y_pred):
     print("=" * 40)
 
 def full_training():
-    decision_boundary = 0.5
+    decision_boundary = 0.8
     epoch = 10
     lr = 0.01
     dtype = torch.float64
@@ -352,7 +349,7 @@ def full_training():
             dataSet.generate_raw_windows(window_size=window_size_, overlapping=overlapping_size_)
             #dataSet.generate_labels()
             dataSet.generate_labels_stimuli_relabel()
-            dataSet.write_samples_and_labels_into_file(f'window_{window_size_}_overlap_{overlapping_size_}.pkl')
+            dataSet.write_samples_and_labels_into_file(f'window_{window_size_}_overlap_{overlapping_size_}_corrected.pkl')
         # dataSet.plot_raw_data_window_by_label(0, 5)
         # dataSet.plot_raw_data_window_by_label(1, 5)
         # dataSet.plot_raw_data_window_by_label(2, 5)
@@ -360,7 +357,7 @@ def full_training():
 
         # dataSet.generate_labels_stimuli_relabel()
         # dataSet.write_samples_and_labels_into_file(f'window_{window_size_}_overlap_{overlapping_size_}_corrected.pkl')
-        dataloaders = dataSet.random_split_undersampling()
+        dataloaders = dataSet.sequential_split_with_resampling()
         multiple_labels = np.array(dataSet.multiple_labels)
         raw_data_windows = np.array(dataSet.raw_data_windows)
         labels_of_interest = [0, 1, 2, 3]
@@ -392,7 +389,7 @@ def full_training():
         n_channels, n_in = dataSet.samples[0].shape
         n_out = len(dataSet.binary_labels_onehot[0])
         hidden1 = 3
-        weight_num = 2
+        weight_num = 4
         affin = torch.tensor([6 / n_in, -0.3606]).tolist()
         #affin = torch.tensor([6 / n_in, -0.3606]).tolist()  #semioptimal
         weight = ((torch.rand(weight_num)-0.5)*8).tolist()
@@ -440,8 +437,8 @@ if __name__ == '__main__':
     #dataSet.load_samples_and_labels_from_file(f'window_15_overlap_11.pkl')
     #dataSet.generate_raw_windows(window_size=20, overlapping=15)
     #dataSet.generate_labels()
-    #dataSet.generate_labels_wo_stimuli()
-    #dataSet.write_samples_and_labels_into_file('window_20_overlap_15_corrected.pkl')
+    #dataSet.generate_labels_stimuli_relabel()
+    #dataSet.write_samples_and_labels_into_file('window_15_overlap_11_corrected.pkl')
     #dataSet.load_samples_and_labels_from_file('window_25_overlap_15.pkl')
     #train_loader, val_loader, test_loader = dataSet.random_split_binary_and_multiple_dataloader()
     #print("unique count: ", dataSet.multiple_labels.unique(return_counts=True))
