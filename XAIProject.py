@@ -85,7 +85,7 @@ class XAIProject():
         """
         Returns a one-dimensional array containing the indices of the samples for which the prediction was incorrect.
         """
-        return np.where(self.prediction_labels != self.get_truth_classes())[0]
+        return np.where(self.binary_labels != self.get_predicted_classes())[0]
 
 
     def get_incorrect_prediction_indices_for_class(self, class_num):
@@ -98,39 +98,41 @@ class XAIProject():
         return np.intersect1d(incorrect_indices, class_indices)
 
 
-    def get_true_pos_prediction_indices_for_class(self, class_num):
+    def get_true_pos_prediction_indices(self):
         """
         Returns a one-dimensional array containing the indices of the samples
         for which the prediction was correctly positive and the sample belongs to the given class.
         """
-        return np.intersect1d(self.get_correct_prediction_indices(), self.get_truth_class_binary_indices_for_class(class_num))
+        #return np.intersect1d(self.get_correct_prediction_indices(), self.get_truth_class_binary_indices_for_class(class_num))
+        return np.intersect1d(np.where(self.binary_labels == 1)[0], np.where(self.prediction_labels == 1)[0])
 
 
-    def get_ture_neg_prediction_indices_for_class(self, class_num):
+    def get_ture_neg_prediction_indices(self):
         """
         Returns a one-dimensional array containing the indices of the samples
         for which the prediction was correctly negative and the sample belongs to the given class.
         """
-        return np.intersect1d(np.where(self.test_y != class_num)[0],\
-                                  np.where(self.prediction_labels != class_num)[0])
+        #return np.intersect1d(np.where(self.prediction_labels != class_num)[0],\
+        #                          np.where(self.prediction_labels != class_num)[0])
+        return np.intersect1d(np.where(self.binary_labels == 0)[0], np.where(self.prediction_labels == 0)[0])
 
 
-    def get_false_positive_indices_for_class(self, class_num):
+    def get_false_positive_indices(self):
         """
         Returns a one-dimensional array containing the indices of the samples
         for which the prediction was falsely positive and the sample belongs to the given class.
         """
-        return np.intersect1d(np.where(self.test_y != class_num)[0],\
-                                  np.where(self.prediction_labels == class_num)[0])
+        # return np.intersect1d(np.where(self.binary_labels == class_num)[0],np.where(self.prediction_labels == class_num)[0])
+        return np.intersect1d(np.where(self.binary_labels == 0)[0],np.where(self.prediction_labels == 1)[0])
 
 
-    def get_false_negative_indices_for_class(self, class_num):
+    def get_false_negative_indices(self):
         """
         Returns a one-dimensional array containing the indices of the samples
         for which the prediction was falsely negative and the sample belongs to the given class.
         """
-        return np.intersect1d(np.where(self.test_y == class_num)[0],\
-                                  np.where(self.prediction_labels != class_num)[0])
+        #return np.intersect1d(np.where(self.binary_labels == class_num)[0],np.where(self.prediction_labels != class_num)[0])
+        return np.intersect1d(np.where(self.binary_labels == 1)[0],np.where(self.prediction_labels == 0)[0])
     
     def get_true_positive_indices_for_multiple_class(self, class_num):
         """
@@ -144,5 +146,5 @@ class XAIProject():
         Returns a one-dimensional array containing the indices of the samples
         for which the prediction was falsely negative and the sample belongs to the given multiple label class.
         """
-        return np.intersect1d(np.where(self.test_y == class_num)[0],\
-                                  np.where(self.prediction_labels != 1)[0])
+        return np.intersect1d(np.where(self.multiple_labels == class_num)[0],\
+                                  np.where(self.prediction_labels == 0)[0])
