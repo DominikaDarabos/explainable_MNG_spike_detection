@@ -388,7 +388,7 @@ def full_training():
 
         n_channels, n_in = dataSet.samples[0].shape
         n_out = len(dataSet.binary_labels_onehot[0])
-        hidden1 = 3
+        hidden1 = 6
         weight_num = 4
         affin = torch.tensor([6 / n_in, -0.3606]).tolist()
         #affin = torch.tensor([6 / n_in, -0.3606]).tolist()  #semioptimal
@@ -430,14 +430,14 @@ def full_training():
         # TESTING
         # test_accuracy, test_loss = test(model, test_loader, criterion)
         print()
-        torch.save(model.state_dict(), f'trained_models/widnow_{window_size_}_overlapping_{overlapping_size_}_hidden_{hidden1}_nweight_{weight_num}_id_2')
+        torch.save(model.state_dict(), f'trained_models/widnow_{window_size_}_overlapping_{overlapping_size_}_hidden_{hidden1}_nweight_{weight_num}_id_7')
 
 if __name__ == '__main__':
-    #dataSet = NeurographyDataset()
-    #dataSet.load_samples_and_labels_from_file(f'window_15_overlap_11.pkl')
+    dataSet = NeurographyDataset()
+    dataSet.load_samples_and_labels_from_file(f'window_15_overlap_11.pkl')
     #dataSet.generate_raw_windows(window_size=20, overlapping=15)
     #dataSet.generate_labels()
-    #dataSet.generate_labels_stimuli_relabel()
+    dataSet.generate_labels_stimuli_relabel()
     #dataSet.write_samples_and_labels_into_file('window_15_overlap_11_corrected.pkl')
     #dataSet.load_samples_and_labels_from_file('window_25_overlap_15.pkl')
     #train_loader, val_loader, test_loader = dataSet.random_split_binary_and_multiple_dataloader()
@@ -447,7 +447,7 @@ if __name__ == '__main__':
     #dataSet.plot_raw_data_window_by_label(1, 5)
     #dataSet.plot_raw_data_window_by_label(2, 5)
     #dataSet.plot_raw_data_window_by_label(3, 5)
-    full_training()
-    end_time = time.time()  # Record end time
-    elapsed_time = end_time - start_time  # Calculate elapsed time
-    print(f"Elapsed time: {elapsed_time:.4f} seconds")
+    # full_training()
+    # end_time = time.time()  # Record end time
+    # elapsed_time = end_time - start_time  # Calculate elapsed time
+    # print(f"Elapsed time: {elapsed_time:.4f} seconds")
