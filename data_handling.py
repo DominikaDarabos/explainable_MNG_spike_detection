@@ -62,8 +62,8 @@ class NeurographyDataset:
         return matrix
 
     def slice_overlapping_raw_data_windows(self, df, column_name):
-        stride = self.window_size - self.overlapping  # Define the stride (how much the window shifts)
-        num_windows = (len(df) - self.window_size) // stride + 1  # Calculate number of windows
+        stride = self.window_size - self.overlapping
+        num_windows = (len(df) - self.window_size) // stride + 1
         matrix = np.array([df[column_name].values[i:i + self.window_size] for i in range(0, len(df) - self.window_size + 1, stride)])
         return matrix
 
@@ -92,16 +92,14 @@ class NeurographyDataset:
         binary_labels_list = []
         multiple_labels_list = []
         for i, window in enumerate(self.raw_timestamps_windows):
-            window_start = window[0]  # Start of the window
-            window_end = window[-1]    # End of the window
+            window_start = window[0]
+            window_end = window[-1]
             
-            # Find timestamps that fall within this range
             matching_rows = self.all_differentiated_spikes[
                 (self.all_differentiated_spikes['ts'] >= window_start) & 
                 (self.all_differentiated_spikes['ts'] <= window_end)
             ]
-            #matching_rows = self.all_differentiated_spikes[self.all_differentiated_spikes['ts'].isin(window)]
-            
+
             if len(matching_rows) == 1:
                 multiple_labels_list.append(matching_rows['track'].values[0])
                 binary_labels_list.append(1)
@@ -111,9 +109,8 @@ class NeurographyDataset:
             else:
                 multiple_labels_list.append(0)
                 binary_labels_list.append(0)
-    
-        # replacement_dict = {'X': 1, 'Track3': 2, 'Track4': 3}
-        # filtered_list = [replacement_dict.get(item, item) for item in multiple_labels_list]
+
+
         self.binary_labels = torch.tensor(binary_labels_list, dtype=torch.int64)
         self.multiple_labels = torch.tensor(multiple_labels_list, dtype=torch.int64)
         binary_labels_onehot = self.one_hot_encode(self.binary_labels, len(torch.unique(self.binary_labels)))
@@ -130,42 +127,43 @@ class NeurographyDataset:
         multiple_labels_list = []
         counter_match_1_but_0 = 0
         counter_match_0_but_1 = 0
-        counter_match_1_but_1 = 0
+        counter_match_1_and_1 = 0
         counter_no_stimulation = 0
         counter_other_spike = 0
-        is_stimuli_but_not_last_two_track = 0
+        is_stimuli_but_not_last_tracks = 0
         last_X_tracks = []
 
-        last_X_track_num = 11
+        last_X_track_num = 10
         print("COUNTS", self.all_differentiated_spikes['track'].value_counts())
 
         for i, (window, data_window) in enumerate(zip(self.raw_timestamps_windows, self.raw_data_windows)):
             window_start = window[0]  # Start of the window
             window_end = window[-1]    # End of the window
             
-            # Find timestamps that fall within this range
             matching_rows = self.all_differentiated_spikes[
                 (self.all_differentiated_spikes['ts'] >= window_start) & 
                 (self.all_differentiated_spikes['ts'] <= window_end)
             ]
-            #is_stimulation = any(-10 >= value for value in data_window)
+
+            #relabel filter
             has_value_below_neg10 = any(value <= -10 for value in data_window)
             has_value_above_9 = any(value >= 9 for value in data_window)
             is_stimulation = has_value_below_neg10 and has_value_above_9
+
             if len(matching_rows) == 1: #label 1 2 3
                 track_value = matching_rows['track'].values[0]
                 last_X_tracks.append(track_value)
                 if len(last_X_tracks) > last_X_track_num:
                     last_X_tracks.pop(0)
                 if track_value == 1 and is_stimulation:
-                    counter_match_1_but_1 += 1
+                    counter_match_1_and_1 += 1
                     multiple_labels_list.append(1)
                     binary_labels_list.append(1)
                 elif track_value  == 1 and not is_stimulation:
                     counter_match_1_but_0 += 1
                     multiple_labels_list.append(0)
                     binary_labels_list.append(0)
-                elif track_value  != 0:
+                elif track_value != 0:
                     multiple_labels_list.append(track_value )
                     binary_labels_list.append(1)
                     counter_other_spike += 1
@@ -187,17 +185,17 @@ class NeurographyDataset:
                         # Do not label as 1 since '1' not in last five 'track' values
                         multiple_labels_list.append(0)
                         binary_labels_list.append(0)
-                        is_stimuli_but_not_last_two_track += 1
+                        is_stimuli_but_not_last_tracks += 1
                 else:
                     multiple_labels_list.append(0)
                     binary_labels_list.append(0)
                     counter_no_stimulation += 1
         
         print("stimulation label but no stimulation: ", counter_match_1_but_0)
-        print("stimulation label and stimulation: ", counter_match_1_but_1)
+        print("stimulation label and stimulation: ", counter_match_1_and_1)
         print("no stimulation label but stimulation: ", counter_match_0_but_1)
         print("no stimulation label and no stimulation: ", counter_no_stimulation)
-        print("is stimulus, but stimulus ts is not in the last 2 track: ", is_stimuli_but_not_last_two_track)
+        print("is stimulus, but stimulus ts is not in the last 2 track: ", is_stimuli_but_not_last_tracks)
         print("other spike:", counter_other_spike)
         value_counts = Counter(multiple_labels_list)
 
@@ -209,55 +207,6 @@ class NeurographyDataset:
         multiple_labels_onehot = self.one_hot_encode(self.multiple_labels, 4)
         self.binary_labels_onehot = binary_labels_onehot.to(self.device).to(dtype=torch.float32)
         self.multiple_labels_onehot = multiple_labels_onehot.to(self.device).to(dtype=torch.float32)
-
-
-    def random_split_binary_dataloader(self):
-        if self.raw_data_windows is None or self.binary_labels is None:
-            print("First generate the raw windows and labels.")
-            return
-        samples = torch.tensor(self.raw_data_windows, dtype=torch.float64)
-        self.samples = samples.unsqueeze(1).to(self.device)
-
-        dataset = TensorDataset(self.samples, self.binary_labels_onehot)
-        total_size = len(dataset)
-        train_size = int(0.8 * total_size)
-        test_size = total_size - train_size
-
-        torch.manual_seed(4)
-        train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
-        train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-        test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
-        return train_loader, test_loader
-
-    def random_split_binary_and_multiple_dataloader(self):
-        if self.raw_data_windows is None or self.binary_labels is None or self.multiple_labels is None:
-            print("First generate the raw windows and labels (binary and multiple).")
-            return
-        samples = torch.tensor(self.raw_data_windows, dtype=torch.float64)
-
-        self.samples = samples.unsqueeze(1).to(self.device)
-
-        dataset = TensorDataset(self.samples, self.binary_labels_onehot, self.multiple_labels_onehot)
-        total_size = len(dataset)
-        train_size = int(0.6 * total_size)   # 60% for training
-        val_size = int(0.2 * total_size)     # 20% for validation
-        test_size = total_size - train_size - val_size  # The rest for testing (20%)
-
-        # Split the dataset into train, validation, and test sets
-        torch.manual_seed(4)
-        train_dataset, val_dataset, test_dataset = random_split(dataset, [train_size, val_size, test_size])
-
-        # Create DataLoaders for each set
-        train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
-        test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
-
-        # self.print_dataset_info("Training", train_dataset)
-        # self.print_dataset_info("Validation", val_dataset)
-        # self.print_dataset_info("Testing", test_dataset)
-
-        return train_loader, val_loader, test_loader
-
 
     def sequential_split_with_resampling(self):
         if self.raw_data_windows is None or self.binary_labels is None or self.multiple_labels is None:
@@ -272,32 +221,21 @@ class NeurographyDataset:
         val_size = int(0.2 * total_size)    # 20% for validation
         test_size = total_size - train_size - val_size  # Remaining for testing (20%)
 
-        # Split indices for train, validation, and test
-        #torch.manual_seed(4)
-        # indices = torch.randperm(total_size)
-        # train_indices = indices[:train_size]
-        # val_indices = indices[train_size:train_size + val_size]
-        # test_indices = indices[train_size + val_size:]
-
-
-
-        indices = torch.arange(total_size)
-        train_indices = indices[:train_size]  # Keep as is
-        val_indices = indices[train_size:train_size + val_size]  # Keep as is
-        test_indices = indices[train_size + val_size:]  # Keep as is
-
-        # Change the random shuffling to only affect the training set
+        # create indices
         torch.manual_seed(4)
+        indices = torch.arange(total_size)
+        train_indices = indices[:train_size]
+        val_indices = indices[train_size:train_size + val_size]
+        test_indices = indices[train_size + val_size:]
         train_indices = train_indices[torch.randperm(len(train_indices))]  # Shuffle only the training indices
 
-        # Use these shuffled indices to split the samples and labels
+        # Use the indices to split the samples and labels
         train_samples, val_samples, test_samples = self.samples[train_indices], self.samples[val_indices], self.samples[test_indices]
         train_binary_labels, val_binary_labels, test_binary_labels = self.binary_labels_onehot[train_indices], self.binary_labels_onehot[val_indices], self.binary_labels_onehot[test_indices]
         train_multiple_labels, val_multiple_labels, test_multiple_labels = self.multiple_labels_onehot[train_indices], self.multiple_labels_onehot[val_indices], self.multiple_labels_onehot[test_indices]
 
+        # split the timestamps samples
         val_timestamps, test_timestamps = self.raw_timestamps_windows[val_indices], self.raw_timestamps_windows[test_indices]
-        print("val timestamps shape", val_timestamps.shape)
-        print("val_samples shape", val_samples.shape)
 
         # Split the samples and labels based on the indices
         train_samples, val_samples, test_samples = self.samples[train_indices], self.samples[val_indices], self.samples[test_indices]
@@ -305,10 +243,10 @@ class NeurographyDataset:
         train_multiple_labels, val_multiple_labels, test_multiple_labels = self.multiple_labels_onehot[train_indices], self.multiple_labels_onehot[val_indices], self.multiple_labels_onehot[test_indices]
 
         # Apply undersampling to the training data BEFORE creating DataLoader
-        train_samples_under, train_binary_labels_under, train_multiple_labels_under = self.apply_oversampling_and_undersampling_comp_up_down(
+        train_samples_under, train_binary_labels_under, train_multiple_labels_under = self.apply_oversampling_and_undersampling_complex(
             train_samples, train_binary_labels, train_multiple_labels, 25000, 75000
         )
-        val_samples_under, val_binary_labels_under, val_multiple_labels_under = self.apply_oversampling_and_undersampling_comp_up_down(
+        val_samples_under, val_binary_labels_under, val_multiple_labels_under = self.apply_oversampling_and_undersampling_complex(
             val_samples, val_binary_labels, val_multiple_labels, 25000, 75000
         )
 
@@ -336,20 +274,16 @@ class NeurographyDataset:
         "test_timestamps": self.raw_timestamps_windows[test_indices],
         }
 
-        print("Dataloaders are ready")
+        print("Dataloaders are ready.")
 
         return result
 
 
     def apply_random_undersampling(self, samples, binary_labels, multiple_labels):
-        # Assuming binary_labels is one-hot encoded, convert it to class indices
-        binary_labels_flat = binary_labels.argmax(dim=1).cpu().numpy()  # Get the class indices from one-hot encoding
-
-        # Convert the samples and multiple_labels to numpy for manipulation
+        binary_labels_flat = binary_labels.argmax(dim=1).cpu().numpy()
         all_samples = samples.cpu().numpy()
         all_multiple_labels = multiple_labels.cpu().numpy()
 
-        # Separate class 0 and class 1
         class_0_indices = np.where(binary_labels_flat == 0)[0]
         class_1_indices = np.where(binary_labels_flat == 1)[0]
 
@@ -370,15 +304,10 @@ class NeurographyDataset:
         binary_labels_tensor = torch.tensor(y_res_binary, dtype=torch.float32).to(self.device)
         multiple_labels_tensor = torch.tensor(y_res_multiple, dtype=torch.float32).to(self.device)
 
-        print("undersampled shapes: ", samples_tensor.shape, binary_labels_tensor.shape, multiple_labels_tensor.shape)
-
         return samples_tensor, binary_labels_tensor, multiple_labels_tensor
     
     def apply_oversampling_and_undersampling(self, samples, binary_labels, multiple_labels, upsample_count, downsample_count):
-        # Assuming binary_labels is one-hot encoded, convert it to class indices
-        binary_labels_flat = binary_labels.argmax(dim=1).cpu().numpy()  # Get the class indices from one-hot encoding
-
-        # Convert the samples and multiple_labels to numpy for manipulation
+        binary_labels_flat = binary_labels.argmax(dim=1).cpu().numpy()
         all_samples = samples.cpu().numpy()
         all_multiple_labels = multiple_labels.cpu().numpy()
 
@@ -386,23 +315,19 @@ class NeurographyDataset:
         class_0_indices = np.where(binary_labels_flat == 0)[0]
         class_1_indices = np.where(binary_labels_flat == 1)[0]
 
-        # Oversample class 1 to target_size
+        # Oversample class 1 to upsample_count
         if len(class_1_indices) < upsample_count:
-            # If there are fewer instances than target_size, we can replicate some instances
             oversampled_indices = np.random.choice(class_1_indices, upsample_count, replace=True)
         else:
             print("WARNING: target size for oversampling is smaller than actual size")
-            # Otherwise, randomly select target_size instances from class 1
             oversampled_indices = np.random.choice(class_1_indices, upsample_count, replace=False)
 
-        print("class1 count", len(oversampled_indices))
         # Undersample class 0 to downsample_count
         class_0_indices = np.where(binary_labels_flat == 0)[0]
         if len(class_0_indices) > downsample_count:
             sampled_class_0_indices = np.random.choice(class_0_indices, downsample_count, replace=False)
         else:
             sampled_class_0_indices = class_0_indices  # Keep all if fewer than downsample_count
-        print("class0 count", len(sampled_class_0_indices))
 
         # Combine the indices of oversampled class 1 and undersampled class 0
         balanced_indices = np.concatenate([oversampled_indices, sampled_class_0_indices])
@@ -417,14 +342,11 @@ class NeurographyDataset:
         binary_labels_tensor = torch.tensor(y_balanced_binary, dtype=torch.float32).to(samples.device)
         multiple_labels_tensor = torch.tensor(y_balanced_multiple, dtype=torch.float32).to(samples.device)
 
-        print("Balanced shapes: ", samples_tensor.shape, binary_labels_tensor.shape, multiple_labels_tensor.shape)
-
         return samples_tensor, binary_labels_tensor, multiple_labels_tensor
     
 
-    def apply_oversampling_and_undersampling_comp_up_down(self, samples, binary_labels, multiple_labels, upsample_count, downsample_count):
-        # Assuming binary_labels is one-hot encoded, convert it to class indices
-        binary_labels_flat = binary_labels.argmax(dim=1).cpu().numpy()  # Get the class indices from one-hot encoding
+    def apply_oversampling_and_undersampling_complex(self, samples, binary_labels, multiple_labels, upsample_count, downsample_count):
+        binary_labels_flat = binary_labels.argmax(dim=1).cpu().numpy()
 
         # Convert the samples and multiple_labels to numpy for manipulation
         all_samples = samples.cpu().numpy()
@@ -448,9 +370,8 @@ class NeurographyDataset:
 
             # Combine indices where multiple_labels are 2 or 3
             combined_indices = np.concatenate([indices_multiple_2, indices_multiple_3])
-            # Normalize the probabilities so they sum to 1
             
-            probabilities = np.array([0.2 if i in indices_multiple_2 else 0.8 for i in combined_indices])
+            probabilities = np.array([0.5 if i in indices_multiple_2 else 0.5 for i in combined_indices])
             probabilities /= probabilities.sum()
 
             # Randomly sample from combined_indices with higher probability for multiple_labels == 3
@@ -458,14 +379,14 @@ class NeurographyDataset:
 
             # Add these additional indices to the oversampled set
             oversampled_indices.extend(sampled_additional_indices)
-        print("class1 count", len(oversampled_indices))
+
         # Undersample class 0 to downsample_count
         class_0_indices = np.where(binary_labels_flat == 0)[0]
         if len(class_0_indices) > downsample_count:
             sampled_class_0_indices = np.random.choice(class_0_indices, downsample_count, replace=False)
         else:
             sampled_class_0_indices = class_0_indices  # Keep all if fewer than downsample_count
-        print("class0 count", len(sampled_class_0_indices))
+
         # Combine the indices of oversampled class 1 and undersampled class 0
         balanced_indices = np.concatenate([list(oversampled_indices), sampled_class_0_indices])
 
@@ -479,25 +400,19 @@ class NeurographyDataset:
         binary_labels_tensor = torch.tensor(y_balanced_binary, dtype=torch.float32).to(samples.device)
         multiple_labels_tensor = torch.tensor(y_balanced_multiple, dtype=torch.float32).to(samples.device)
 
-        print("Balanced shapes: ", samples_tensor.shape, binary_labels_tensor.shape, multiple_labels_tensor.shape)
-
         return samples_tensor, binary_labels_tensor, multiple_labels_tensor
 
 
 
     def apply_clustered_undersampling(self, samples, binary_labels, multiple_labels, num_clusters=10):
-        # Assuming binary_labels is one-hot encoded, convert it to class indices
         binary_labels_flat = binary_labels.argmax(dim=1).cpu().numpy()
 
-        # Convert the samples and multiple_labels to numpy for manipulation
         all_samples = samples.squeeze(1).cpu().numpy()
         all_multiple_labels = multiple_labels.cpu().numpy()
 
-        # Separate class 0 and class 1
         class_0_indices = np.where(binary_labels_flat == 0)[0]
         class_1_indices = np.where(binary_labels_flat == 1)[0]
 
-        # Get class 1 samples
         class_1_samples = all_samples[class_1_indices]
 
         # Clustering class 0 samples
@@ -512,16 +427,15 @@ class NeurographyDataset:
 
         # Sample from each cluster
         sampled_class_0_indices = []
-        samples_per_cluster = len(class_1_indices) // num_clusters  # Determine how many samples to take from each cluster
+        samples_per_cluster = len(class_1_indices) // num_clusters
 
         for cluster_id, indices in cluster_indices.items():
-            if len(indices) > samples_per_cluster:  # Ensure we don't sample more than available
+            if len(indices) > samples_per_cluster:
                 sampled_from_cluster = np.random.choice(indices, samples_per_cluster, replace=False)
             else:
-                sampled_from_cluster = indices  # If there are fewer samples than requested, take all
+                sampled_from_cluster = indices
             sampled_class_0_indices.extend(class_0_indices[sampled_from_cluster])
 
-        # Combine the indices of class 1 and the sampled class 0
         undersampled_indices = np.concatenate([class_1_indices, sampled_class_0_indices])
 
         # Select undersampled data
@@ -535,11 +449,7 @@ class NeurographyDataset:
         binary_labels_tensor = torch.tensor(y_res_binary, dtype=torch.float32).to(self.device)
         multiple_labels_tensor = torch.tensor(y_res_multiple, dtype=torch.float32).to(self.device)
 
-        print("undersampled shapes: ", samples_tensor.shape, binary_labels_tensor.shape, multiple_labels_tensor.shape)
-
         return samples_tensor, binary_labels_tensor, multiple_labels_tensor
-
-
 
     
     def write_samples_and_labels_into_file(self, file_path):
@@ -583,11 +493,9 @@ class NeurographyDataset:
     """
 
     def plot_raw_data_and_spikes(self, df_part):
-        # Get the range of the timestamps from the first 2000 points
         min_ts = df_part['raw_ts'].min()
         max_ts = df_part['raw_ts'].max()
 
-        # 2. Filter timestamps that fall within the plotted range
         df_timestamps_in_range = self.stimulation[
             (self.stimulation['stimulation_ts'] >= min_ts) & (self.stimulation['stimulation_ts'] <= max_ts)
         ]
@@ -598,11 +506,6 @@ class NeurographyDataset:
 
         plt.figure(figsize=(20, 5))
         plt.scatter(df_part['raw_ts'], df_part['raw_amplitude'], label='Raw Data', color='gray', s=3)
-
-        # 4. Plot the filtered timestamps as dots
-        #plt.scatter(df_timestamps_in_range['stimulation_ts'], 
-        #            [df_part['raw_amplitude'].mean()] * len(df_timestamps_in_range),  # Positioning dots at mean amplitude level
-        #            color='r', marker='o', label='Stimulus Timestamps', zorder=5)
 
         plt.vlines(df_timestamps_in_range['stimulation_ts'], 
                 ymin=df_part['raw_amplitude'].min(), 
@@ -618,18 +521,14 @@ class NeurographyDataset:
                 ymax=df_part['raw_amplitude'].max(), 
                 color='y', linestyle='--', label='Track3', linewidth=1)
 
-        # 5. Plot vertical lines for the second group (green)
         plt.vlines(df_value2['spike_ts'], 
                 ymin=df_part['raw_amplitude'].min(), 
                 ymax=df_part['raw_amplitude'].max(), 
                 color='g', linestyle='--', label='Track4', linewidth=0.5)
 
-        # Customize plot
         plt.xlabel('Timestamp')
         plt.ylabel('Amplitude')
         plt.legend()
-
-        # Show the plot
         plt.show()
 
     def plot_raw_data_window_by_label(self, track_id, subplot_length):
@@ -646,31 +545,36 @@ class NeurographyDataset:
             if self.all_differentiated_spikes['track'][i] == track_id:
                 special_timestamps.append(self.all_differentiated_spikes['ts'][i])
 
-            # Stop if we have collected enough elements
             if len(special_timestamps) == subplot_length:
                 break
 
-        # Set up the figure and axes for subplots
-        fig, axs = plt.subplots(subplot_length, 1, figsize=(10, 15))
-        fig.suptitle(f"First {subplot_length} Windows Labeled as {track_id}", fontsize=16)
+        fig, axs = plt.subplots(subplot_length, 1, figsize=(8, 10))
+        all_handles_labels = []
 
-        # Plot each of the first 5 windows labeled 'X'
         for i in range(len(x_windows)):
             window_data = x_windows[i]
             times_data = x_times[i]
 
             # Plot amplitudes vs. timestamps
-            axs[i].plot(times_data, window_data, marker='o', label=f"Window {i + 1}")
+            line, = axs[i].plot(times_data, window_data, marker='o', color='gray', linewidth=2, markersize=6)# , label=f"Window {i + 1}")
 
-            # Mark special timestamps
+            all_handles_labels.append((line, f"Raw data"))
+
             for ts in special_timestamps:
                 if ts in times_data:
-                    axs[i].axvline(x=ts, color='red', linestyle='--', label=f'Spike Timestamp')
+                    vline = axs[i].axvline(x=ts, color='red', linestyle='--', label=f'Stimulus Timestamp', linewidth=3)
+                    all_handles_labels.append((vline, 'Stimulus Timestamp'))
 
-            axs[i].set_xlabel("Timestamp")
             axs[i].set_ylabel("Amplitude")
-            axs[i].legend()
+            axs[i].set_ylim(-10,10)
             axs[i].grid()
+            axs[i].ticklabel_format(useOffset=False)
+            if i == subplot_length - 1:
+                axs[i].set_xlabel("Timestamp")
+
+        handles, labels = zip(*all_handles_labels)
+        unique_handles_labels = dict(zip(labels, handles))
+        fig.legend(unique_handles_labels.values(), unique_handles_labels.keys(), loc='upper center', ncol=2)
 
         plt.tight_layout(rect=[0, 0, 1, 0.96])
         plt.show()
@@ -684,7 +588,6 @@ class NeurographyDataset:
         min_gap = time_diffs.min()
         max_gap = time_diffs.max()
 
-        # Calculate the index differences between consecutive indices
         indices = [i for i, track in enumerate(self.binary_labels) if track == 1]
         indices = self.raw_data.index[self.raw_data['raw_ts'].isin(self.all_differentiated_spikes['ts'])].tolist()
 
@@ -701,20 +604,15 @@ class NeurographyDataset:
         raw_time_diffs = self.raw_data['raw_ts'].diff().dropna()
         print(f"Minimum gap between sampled values: {raw_time_diffs.min()}") # 0.00009999999929277692
         print(f"Spike min gap / sample freq gap: {min_gap / raw_time_diffs.min()}")
-    
 
-#df_part = raw_data.iloc[38000:42000]
-#plot_raw_data_and_spikes(df_part)
 
     def print_dataset_info(self, name, dataset):
-        # Create DataLoader for easier iteration
         loader = DataLoader(dataset, batch_size=len(dataset), shuffle=False)
         data, binary_labels, multiple_labels = next(iter(loader))
         
         print(f"{name} Set:")
         print(f" - Shape of samples: {data.shape}")
         
-        # Get unique values and counts for binary and multiple labels
         binary_label_classes = binary_labels.argmax(dim=-1).cpu().numpy()
         unique_binary, binary_counts = torch.unique(binary_labels, return_counts=True, dim=0)
         
