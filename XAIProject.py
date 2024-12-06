@@ -25,9 +25,10 @@ def upsample(data, factor):
 
 class XAIProject():
     def __init__(self, model, samples, binary_labels, multiple_labels, probabilities):
+        self.decision_boundary = 0.8
         self.model = model
         self.samples = samples
-        self.binary_labels = np.argmax(binary_labels, axis=1)
+        self.binary_labels = np.argmax(binary_labels, axis=1) 
         self.multiple_labels = np.argmax(multiple_labels, axis=1)
         self.probabilities = probabilities
         self.prediction_labels = self.get_predicted_classes()
@@ -42,7 +43,8 @@ class XAIProject():
         """
         Returns a one-dimensional array with the predicted classes.
         """
-        class_labels = np.argmax(self.probabilities, axis=1)
+        #class_labels = np.argmax(self.probabilities, axis=1)
+        class_labels = (self.probabilities[:, 1] >= self.decision_boundary).astype(int)
         return class_labels
 
 
