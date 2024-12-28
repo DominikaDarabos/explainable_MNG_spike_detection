@@ -7,6 +7,7 @@ from sklearn.metrics import (
     precision_score, recall_score, f1_score, confusion_matrix,
     roc_auc_score, precision_recall_curve, auc, average_precision_score
 )
+from collections import Counter
 from focal_loss import *
 import seaborn as sns
 import torch.nn as nn
@@ -198,10 +199,10 @@ def probability_statistics_(all_binary_labels, all_multiple_labels, all_predicti
     # Initialize containers for statistics for each label
     num_labels = 4
     stats = {f'Label {i}': {
-        'True Positives': [],
-        'False Positives': [],
-        'True Negatives': [],
-        'False Negatives': [],
+        'TP': [],
+        'FP': [],
+        'TN': [],
+        'FN': [],
     } for i in range(num_labels)}
 
     # Iterate through all samples and classify them into TP, FP, TN, FN for each label
@@ -214,63 +215,180 @@ def probability_statistics_(all_binary_labels, all_multiple_labels, all_predicti
             # True Positives (TP)
             if label_index == 0:
                 if true_label == label_index and pred_label == 0:
-                    stats[f'Label {label_index}']['True Negatives'].append(prob)
+                    stats[f'Label {label_index}']['TN'].append(prob)
                 
                 # False Positives (FP)
                 elif true_label == label_index and pred_label == 1:
-                    stats[f'Label {label_index}']['False Positives'].append(prob)
+                    stats[f'Label {label_index}']['FP'].append(prob)
                     
             else:
                 if true_label == label_index and pred_label == 1:
-                    stats[f'Label {label_index}']['True Positives'].append(prob)
+                    stats[f'Label {label_index}']['TP'].append(prob)
                 
                 # False Negatives (FN)
                 elif true_label == label_index and pred_label == 0:
-                    stats[f'Label {label_index}']['False Negatives'].append(prob)
+                    stats[f'Label {label_index}']['FN'].append(prob)
+    
     data = []
     labels = []
+    colors = []
     # Calculate and print statistics for each label
     for label_index in range(num_labels):
         for category in stats[f'Label {label_index}']:
             if len(stats[f'Label {label_index}'][category]) > 0:
                 data.extend(stats[f'Label {label_index}'][category])
                 labels.extend([f'Label {label_index} - {category}'] * len(stats[f'Label {label_index}'][category]))
+                if 'N' in category:
+                    colors.extend(['blue'] * len(stats[f'Label {label_index}'][category]))
+                elif 'P' in category:
+                    colors.extend(['red'] * len(stats[f'Label {label_index}'][category]))
+                else:
+                    colors.extend(['gray'] * len(stats[f'Label {label_index}'][category]))  # Default color
 
+    df = pd.DataFrame({'Labels': labels, 'Data': data, 'Colors': colors})
+    # Plot the boxplot
     plt.figure(figsize=(12, 8))
     sns.set_style("whitegrid")
-    sns.boxplot(x=labels, y=data)
+    sns.boxplot(
+        x='Labels',
+        y='Data',
+        hue='Colors',  # Assigning the color column as hue
+        data=df,
+        palette={'blue': 'blue', 'red': 'red', 'gray': 'gray'},  # Mapping colors explicitly
+        dodge=False,  # Ensures the boxes do not separate by hue
+        #showfliers=False
+    )
     plt.xticks(rotation=90)
     plt.title("Boxplot of Probabilities for Each Label and Category")
     plt.ylabel("Probability")
     plt.xlabel("Categories")
+    plt.legend([], [], frameon=False)  # Disable legend
     plt.tight_layout()
     plt.show()
+
+
+    tp_indices = [
+        i for i, label in enumerate(labels)
+        if any(f'Label {lbl} - TP' in label for lbl in [1, 2, 3])
+    ]
+
+    filtered_tp_data = [data[i] for i in tp_indices]
+    filtered_tp_labels = [labels[i] for i in tp_indices]
+    filtered_tp_colors = ['red'] * len(filtered_tp_data)  # All TP categories will be red
+
+    tp_palette = {
+    'Label 1 - TP': 'red',
+    'Label 2 - TP': 'red',
+    'Label 3 - TP': 'red'
+    }
+
+    # Create the boxplot for filtered TP data
+    plt.figure(figsize=(8, 6))
+    sns.set_style("whitegrid")
+    sns.boxplot(
+        x=filtered_tp_labels,
+        y=filtered_tp_data,
+        palette=tp_palette,  # Provide a complete palette mapping
+        #showfliers=False  # Remove outlier circles
+    )
+    plt.xticks(rotation=90)
+    plt.title("Boxplot of Probabilities for TP Categories (Labels 1, 2, 3)")
+    plt.ylabel("Probability")
+    plt.tight_layout()
+    plt.show()
+
+def group_indices(indices):
+    if len(indices) == 0:
+        return []
+
+    groups = []
+    group_start = indices[0]
+    group_len = 1
+
+    for i in range(1, len(indices)):
+        # Check if current index is adjacent to the previous one (i.e., 1 or 2 indices apart)
+        if indices[i] - indices[i-1] <= 2:
+            group_len += 1
+        else:
+
+            groups.append((group_start, group_len))
+            group_start = indices[i]
+            group_len = 1
+
+    groups.append((group_start, group_len))
+    
+    return groups
+
+def ranges_overlap(x_start, x_end, y_start, y_end):
+    return (x_start < y_end and x_end > y_start) #  or (y_start < x_end and y_end > x_start)
+
+def merge_predictions(y_pred, false_factor=0):
+    y_pred = np.array(y_pred)
+    merged_indices = []
+
+    i = 0
+    while i < len(y_pred):
+        if y_pred[i] == 1:
+            start = i
+            length = 0
+            gap = 0
+            while i < len(y_pred) and (y_pred[i] == 1 or gap < false_factor):
+                if y_pred[i] == 1:
+                    length += 1
+                    gap = 0  # Reset the gap counter on encountering a `1`
+                else:
+                    gap += 1
+                i += 1
+            merged_indices.append((start, length))
+        else:
+            i += 1
+
+    return merged_indices
+
+
+
+def len_stats(group):
+    print("Overall length: ", len(group))
+    length_counts = {}
+
+    for idx, group_len in group:
+        if group_len in length_counts:
+            length_counts[group_len] += 1
+        else:
+            length_counts[group_len] = 1
+    
+    print("-----")
+    print("Distinct length : count")
+    for length in sorted(length_counts.keys()):  # Sorting the keys
+        print(f"{length}: {length_counts[length]}")
 
 
 def compute_metrics(y_true, y_pred):
     # Convert tensors to NumPy arrays if necessary
     y_true = y_true.cpu().numpy()
-    y_pred = y_pred.cpu().numpy()
+    y_pred_prob = y_pred.cpu().numpy()
     
+    y_pred = (y_pred_prob >= 0.8).astype(int)  # Convert to binary outcome
+    false_negatives_indexes = np.where((y_true == 1) & (y_pred == 0))[0]
+
+    # Print false negative indexes
+    print(f'False Negative Indexes: {false_negatives_indexes}')
+
     # Precision, Recall, F1 for class 1 (signal)
     precision = precision_score(y_true, y_pred, pos_label=1)
     recall = recall_score(y_true, y_pred, pos_label=1)
     f1 = f1_score(y_true, y_pred, pos_label=1)
-    
+
     # Confusion matrix
     conf_matrix = confusion_matrix(y_true, y_pred)
 
     tn, fp, fn, tp = conf_matrix.ravel()
-    
+
     # False Positive Rate
     fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
-    
-    # ROC-AUC
-    roc_auc = roc_auc_score(y_true, y_pred)
 
-    # Precision-Recall Curve and PR AUC
-    precisions, recalls, _ = precision_recall_curve(y_true, y_pred)
-    pr_auc = auc(recalls, precisions)  # Area under PR curve
+    # ROC-AUC
+    roc_auc = roc_auc_score(y_true, y_pred_prob)
 
     #F-2 score = (1 + 2^2) * (precision * recall) / (2^2 * precision + recall)
     f2 = (5 * precision * recall) / (4  * precision + recall) if (4  * precision + recall) > 0 else 0.0
@@ -292,6 +410,119 @@ def compute_metrics(y_true, y_pred):
     print("=" * 40)
     print(f"ROC-AUC       : {roc_auc:.4f}")
     print("=" * 40)
+    
+       
+    # # Find the indices for TP, FN, FP
+    # TP_indices = np.where((y_true == 1) & (y_pred == 1))[0]
+    # FN_indices = np.where((y_true == 1) & (y_pred == 0))[0]
+    # FP_indices = np.where((y_true == 0) & (y_pred == 1))[0]
+    # GP_indices = np.where(y_true == 1)[0]
+
+    # # Group the indices for TP, FN, and FP
+    # TP_groups = group_indices(TP_indices)
+    # FN_groups = group_indices(FN_indices)
+    # FP_groups = group_indices(FP_indices)
+    # GT_groups = group_indices(GP_indices)
+
+
+    # # print("True Positive Groups:", TP_groups)
+    # # print("False Negative Groups:", FN_groups)
+    # # print("False Positive Groups:", FP_groups)
+    # # print("Ground Truth Groups:", GT_groups)
+
+
+    # # Print results
+    # print("=" * 40)
+    # print("MERGED METRICS")
+    # print("=" * 40)
+
+    # print("GROUND TRUTH POSITIVE")
+    # len_stats(GT_groups)
+    # print("=" * 40)
+    # print("TRUE POSITIVE")
+    # len_stats(TP_groups)
+    # print("=" * 40)
+    # print("FALSE POSITIVE")
+    # len_stats(FP_groups)
+    # print("=" * 40)
+    # print("FALSE NEGATIVE")
+    # len_stats(FN_groups)
+    # print("=" * 40)
+    # print("=" * 40)
+
+    pred_intervals = merge_predictions(y_pred)
+    true_intervals = merge_predictions(y_true)
+    
+    tp = 0
+    fp = 0
+    fn = 0
+    pred_length_counts = Counter()
+    true_length_counts = Counter()
+
+    FP_indices = []
+    TP_indices = []
+    FN_indices = []
+
+
+
+    # Iterate over predictions. If it overlaps with ground truth, that is a TP. If not, that is a FP.
+    for p_start, p_length in pred_intervals:
+        pred_length_counts[p_length] += 1
+        p_end = p_start + p_length
+        overlap = False
+        for t_start, t_length in true_intervals:
+            t_end = t_start+t_length
+            if ranges_overlap(p_start, p_end, t_start, t_end):
+                overlap = True
+        if overlap:
+            tp += 1
+            TP_indices.append((p_start, p_length))
+        else:
+            fp += 1
+            FP_indices.append((p_start, p_length))
+
+    for t_start, t_length in true_intervals:
+        true_length_counts[t_length] += 1
+        t_end = t_start + t_length
+
+        overlap = False
+        for p_start, p_length in pred_intervals:
+            p_end = p_start+p_length
+            if ranges_overlap(t_start, t_end, p_start, p_end):
+                overlap = True
+
+        if not overlap:
+            fn += 1
+            FN_indices.append((t_start, t_length))
+
+    recall_merged = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    
+    print("=" * 40)
+    print("MERGED METRICS")
+    print("=" * 40)
+    print("RECALL", recall_merged)
+    print("GROUND TRUTH POSITIVE")
+    GT_counter = dict(Counter(true_intervals))
+    len_stats(GT_counter)
+
+    print("=" * 40)
+    print("TRUE POSITIVE")
+    TP_counter = dict(Counter(TP_indices))
+    len_stats(TP_counter)
+
+    print("=" * 40)
+    print("FALSE POSITIVE")
+    FP_counter = dict(Counter(FP_indices))
+    len_stats(FP_counter)
+
+    print("=" * 40)
+    print("FALSE NEGATIVE")
+    FN_counter = dict(Counter(FN_indices))
+    len_stats(FN_counter)
+
+    print("=" * 40)
+    print("=" * 40)
+
     return f"precision: {precision}, recall: {recall}, matrix: {conf_matrix}, roc_auc: {roc_auc}"
 
 def full_training():
