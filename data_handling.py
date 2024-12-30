@@ -11,6 +11,7 @@ import pickle
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 from sklearn.cluster import KMeans
 from collections import Counter
+import matplotlib.cm as cm
 
 
 class NeurographyDataset:
@@ -19,7 +20,9 @@ class NeurographyDataset:
         directory_path = os.getcwd()
         self.raw_data = self.read_csv_into_df([directory_path, '..', 'data', 'raw_data.csv'])
         self.ground_truth_spikes = self.read_csv_into_df([directory_path, '..', 'data', 'spike_timestamps.csv'])
+        #self.ground_truth_spikes = self.read_csv_into_df([directory_path, '..', 'data', 'fake_spikes.csv'])
         self.stimulation = self.read_csv_into_df([directory_path, '..', 'data', 'stimulation_timestamps.csv'])
+        self.replacement_dict = self.generate_replacement_dict()
         self.all_differentiated_spikes = self.outer_merge_spikes()
         self.raw_data_windows = None
         self.raw_timestamps_windows = None
@@ -30,6 +33,7 @@ class NeurographyDataset:
         self.samples = None
         self.window_size = None
         self.overlapping = None
+        #self.replacement_dict = {'X': 1, 'Track3': 2, 'Track4': 3}
 
     """
     Private, utils
@@ -39,6 +43,13 @@ class NeurographyDataset:
         csv_path = os.path.join(*path_list)
         csv_path = os.path.abspath(csv_path)
         return pd.read_csv(csv_path)
+    
+    def generate_replacement_dict(self):
+        unique_tracks = self.ground_truth_spikes['track'].unique()
+        r_dict = {track: idx+2 for idx, track in enumerate(unique_tracks)}
+        r_dict["X"] = 1
+        print(r_dict)
+        return r_dict
 
 
     def outer_merge_spikes(self):
@@ -52,8 +63,7 @@ class NeurographyDataset:
 
         all_spike = all_spike.sort_values('ts').reset_index(drop=True)
         all_spike = all_spike.drop(columns=['spike_idx'])
-        replacement_dict = {'X': 1, 'Track3': 2, 'Track4': 3}
-        all_spike['track'] = all_spike['track'].replace(replacement_dict)
+        all_spike['track'] = all_spike['track'].replace(self.replacement_dict)
         return all_spike
 
     def slice_continuous_raw_data_windows(self, df, column_name):
@@ -164,7 +174,7 @@ class NeurographyDataset:
                     multiple_labels_list.append(0)
                     binary_labels_list.append(0)
                 elif track_value != 0:
-                    multiple_labels_list.append(track_value )
+                    multiple_labels_list.append(track_value)
                     binary_labels_list.append(1)
                     counter_other_spike += 1
                 if track_value != 0 and track_value != 1 and is_stimulation:
@@ -204,7 +214,7 @@ class NeurographyDataset:
         self.binary_labels = torch.tensor(binary_labels_list, dtype=torch.int64)
         self.multiple_labels = torch.tensor(multiple_labels_list, dtype=torch.int64)
         binary_labels_onehot = self.one_hot_encode(self.binary_labels, 2)
-        multiple_labels_onehot = self.one_hot_encode(self.multiple_labels, 4)
+        multiple_labels_onehot = self.one_hot_encode(self.multiple_labels, len(torch.unique(self.multiple_labels)))
         self.binary_labels_onehot = binary_labels_onehot.to(self.device).to(dtype=torch.float32)
         self.multiple_labels_onehot = multiple_labels_onehot.to(self.device).to(dtype=torch.float32)
 
@@ -512,19 +522,19 @@ class NeurographyDataset:
                 ymax=df_part['raw_amplitude'].max(), 
                 color='r', linestyle='--', label='Stimulus Timestamps', linewidth=1)
 
-        df_value1 = df_timestamps_in_range_gt[df_timestamps_in_range_gt['track'] == 'Track3']  # For yellow lines
-        df_value2 = df_timestamps_in_range_gt[df_timestamps_in_range_gt['track'] == 'Track4']
+        track_keys = list(self.replacement_dict.keys())
+        if 'X' in track_keys:
+            track_keys.remove('X')
+        num_tracks = len(track_keys)
+        colormap = cm.get_cmap('tab10', num_tracks)  # Choose a colormap
 
-
-        plt.vlines(df_value1['spike_ts'], 
-                ymin=df_part['raw_amplitude'].min(), 
-                ymax=df_part['raw_amplitude'].max(), 
-                color='y', linestyle='--', label='Track3', linewidth=1)
-
-        plt.vlines(df_value2['spike_ts'], 
-                ymin=df_part['raw_amplitude'].min(), 
-                ymax=df_part['raw_amplitude'].max(), 
-                color='g', linestyle='--', label='Track4', linewidth=0.5)
+        for i, track in enumerate(track_keys):
+            df_track = df_timestamps_in_range_gt[df_timestamps_in_range_gt['track'] == track]
+            color = colormap(i / num_tracks)  # Get color for the track
+            plt.vlines(df_track['spike_ts'], 
+                    ymin=df_part['raw_amplitude'].min(), 
+                    ymax=df_part['raw_amplitude'].max(), 
+                    color=color, linestyle='--', label=track, linewidth=1)
 
         plt.xlabel('Timestamp')
         plt.ylabel('Amplitude')
