@@ -28,8 +28,10 @@ class XAIProject():
         self.decision_boundary = 0.8
         self.model = model
         self.samples = samples
-        self.binary_labels = np.argmax(binary_labels, axis=1) 
-        self.multiple_labels = np.argmax(multiple_labels, axis=1)
+        # self.binary_labels = np.argmax(binary_labels, axis=1) 
+        # self.multiple_labels = np.argmax(multiple_labels, axis=1)
+        self.binary_labels = binary_labels
+        self.multiple_labels = multiple_labels
         self.probabilities = probabilities
         self.prediction_labels = self.get_predicted_classes()
         self.analyzer_output = None
@@ -105,7 +107,6 @@ class XAIProject():
         Returns a one-dimensional array containing the indices of the samples
         for which the prediction was correctly positive and the sample belongs to the given class.
         """
-        #return np.intersect1d(self.get_correct_prediction_indices(), self.get_truth_class_binary_indices_for_class(class_num))
         return np.intersect1d(np.where(self.binary_labels == 1)[0], np.where(self.prediction_labels == 1)[0])
 
 
@@ -114,8 +115,6 @@ class XAIProject():
         Returns a one-dimensional array containing the indices of the samples
         for which the prediction was correctly negative and the sample belongs to the given class.
         """
-        #return np.intersect1d(np.where(self.prediction_labels != class_num)[0],\
-        #                          np.where(self.prediction_labels != class_num)[0])
         return np.intersect1d(np.where(self.binary_labels == 0)[0], np.where(self.prediction_labels == 0)[0])
 
 
@@ -124,7 +123,6 @@ class XAIProject():
         Returns a one-dimensional array containing the indices of the samples
         for which the prediction was falsely positive and the sample belongs to the given class.
         """
-        # return np.intersect1d(np.where(self.binary_labels == class_num)[0],np.where(self.prediction_labels == class_num)[0])
         return np.intersect1d(np.where(self.binary_labels == 0)[0],np.where(self.prediction_labels == 1)[0])
 
 
@@ -133,7 +131,6 @@ class XAIProject():
         Returns a one-dimensional array containing the indices of the samples
         for which the prediction was falsely negative and the sample belongs to the given class.
         """
-        #return np.intersect1d(np.where(self.binary_labels == class_num)[0],np.where(self.prediction_labels != class_num)[0])
         return np.intersect1d(np.where(self.binary_labels == 1)[0],np.where(self.prediction_labels == 0)[0])
     
     def get_true_positive_indices_for_multiple_class(self, class_num):
