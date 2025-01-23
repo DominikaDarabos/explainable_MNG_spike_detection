@@ -15,6 +15,40 @@ import matplotlib.cm as cm
 
 
 class MicroneurographyDataloader:
+    """
+    A class to load, process, and manage microneurography data for spike classification and analysis.
+
+    Attributes:
+    -----------
+    device : torch.device
+        The device (CUDA if available, otherwise CPU) on which data tensors are allocated.
+    raw_data : pandas.DataFrame
+        The raw microneurography data loaded from 'raw_data.csv'.
+    ground_truth_spikes : pandas.DataFrame
+        The ground truth spike timestamps loaded from 'spike_timestamps.csv'.
+    stimulation : pandas.DataFrame
+        The stimulation timestamps loaded from 'stimulation_timestamps.csv'.
+    all_differentiated_spikes : pandas.DataFrame
+        A merged DataFrame containing all spike information across stimulation and track sources.
+    raw_data_windows : list or numpy.ndarray
+        Containers for segmented windows of the raw data, to be set later in processing.
+    raw_timestamps_windows : list or numpy.ndarray
+        Containers for timestamps corresponding to each segmented raw data window.
+    binary_labels : numpy.ndarray
+        Binary labels for each data window, where 1 represents a spike (stimulation, and all kinds of track) and 0 represents no spike.
+    multiple_labels : list or numpy.ndarray
+        Multi-class labels for each data window, capturing different spike types. Later used for analysis purposes.
+    binary_labels_onehot : numpy.ndarray
+        One-hot encoded binary labels.
+    multiple_labels_onehot : numpy.ndarray
+        One-hot encoded multi-class labels.
+    samples : list or numpy.ndarray
+        Stores the final dataset for the model input.
+    window_size : int
+        Size of each sliding window, to be set later in processing.
+    overlapping : int
+        Degree of overlap between windows, to be set later in processing.
+    """
     def __init__(self, raw_data_relative_path='../data/raw_data.csv', spikes_relative_path='../data/spike_timestamps.csv', stimulation_relative_path='../data/stimulation_timestamps.csv'):
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         self.raw_data_df = self.read_csv_into_df(raw_data_relative_path)
@@ -93,6 +127,9 @@ class MicroneurographyDataloader:
         """
         self.window_size = window_size
         self.overlapping = overlapping
+        """
+        CHANGE the column names here, if they are not consistent througout the files.
+        """
         self.raw_timestamps_windows = self.slice_overlapping_raw_data_windows(self.raw_data_df, 'raw_ts')
         self.raw_data_windows = self.slice_overlapping_raw_data_windows(self.raw_data_df, 'raw_amplitude')
 
@@ -120,7 +157,11 @@ class MicroneurographyDataloader:
                 multiple_labels_list.append(spike_matching_rows['track'].values[0])
                 binary_labels_list.append(1)
             elif len(spike_matching_rows) > 1:
-                raise ValueError(f"WARNING: there are {len(spike_matching_rows)}  spike timestamps in one window.")
+                track_value = spike_matching_rows['track'].values[0]
+                print(f"WARNING: there are {len(spike_matching_rows)}  spike timestamps ({spike_matching_rows}) in window {i}.")
+                print("The multi class label is assigned to the first spike that appeared in the window.")
+                multiple_labels_list.append(track_value)
+                binary_labels_list.append(1)
             else:
                 multiple_labels_list.append(0)
                 binary_labels_list.append(0)
@@ -134,7 +175,7 @@ class MicroneurographyDataloader:
         print("Multi class labels count: ", value_counts)
 
 
-    def generate_labels_stimuli_relabel(self):
+    def generate_labels_stimuli_relabel(self, negative_stimulus_limit, positive_stimulus_limit, logigal_operator):
         """
         The stimulus "arrives" approximately 40 datapoints later than it is marked. If the stimulus extreme values appear within
         round(40 / (self.window_size - self.overlapping)) number of windows after the marked timestamp, it is relabeled as class 1.
@@ -157,6 +198,7 @@ class MicroneurographyDataloader:
         counter_stimuliby_filter_but_not_in_threshold = 0
         last_X_tracks = []
         relabel_threshold = round(40 / (self.window_size - self.overlapping))
+        print("RELABEL THRESHOLD:", relabel_threshold)
     
         print("Original spikes count:", self.all_spikes_df['track'].value_counts())
 
@@ -170,9 +212,15 @@ class MicroneurographyDataloader:
             ]
 
             #relabel filter
-            has_value_below_neg10 = any(value <= -10 for value in data_window)
-            has_value_above_9 = any(value >= 9 for value in data_window)
-            is_stimulation_by_filter = has_value_below_neg10 and has_value_above_9
+            # negative_limited = any(value <= -10 for value in data_window)
+            # positive_limited = any(value >= 9 for value in data_window)
+            # is_stimulation_by_filter = negative_limited and positive_limited
+            negative_limited = any(value <= negative_stimulus_limit for value in data_window)
+            positive_limited = any(value >= positive_stimulus_limit for value in data_window)
+            if logigal_operator == 'and':
+                is_stimulation_by_filter = negative_limited and positive_limited
+            elif logigal_operator == 'or':
+                is_stimulation_by_filter = negative_limited or positive_limited
 
             if len(spike_matching_rows) == 1: #originally label 1 2 3
                 track_value = spike_matching_rows['track'].values[0]
@@ -191,15 +239,18 @@ class MicroneurographyDataloader:
                     multiple_labels_list.append(track_value)
                     binary_labels_list.append(1)
                 if track_value != 0 and track_value != 1 and is_stimulation_by_filter:
-                    print("STIMULATION BUT OTHER SPIKE")
+                    print("WARNING: An AP window got through the stimulation filter. No label change.")
             elif len(spike_matching_rows) > 1:
-                raise ValueError(f"WARNING: there are {len(spike_matching_rows)}  spike timestamps ({spike_matching_rows}) in window {i}.")
+                print(f"WARNING: there are {len(spike_matching_rows)}  spike timestamps ({spike_matching_rows}) in window {i}.")
+                print("The multi class label is assigned to the first spike that appeared in the window.")
+                multiple_labels_list.append(track_value)
+                binary_labels_list.append(1)
             else: # originally label 0
                 last_X_tracks.append(0)
                 if len(last_X_tracks) > relabel_threshold:
                     last_X_tracks.pop(0)
                 if is_stimulation_by_filter:
-                    if 1 in last_X_tracks:
+                    if 1 in last_X_tracks and set(last_X_tracks) == {0, 1}:
                         counter_orig_0_but_1 += 1
                         multiple_labels_list.append(1)
                         binary_labels_list.append(1)
@@ -229,21 +280,36 @@ class MicroneurographyDataloader:
 
     def sequential_split_with_resampling(self, batch_size, minor_upsample_count=25000, major_downsample_count=75000):
         """
-        Split the whole data into training (the first 60% of the data), validation (the next 20% of the data), and test (the last 20%of the data) sets.
-        The training set's positive class is upsamled to the amount of minor_upsample_count, and the negative class to the amount of major_downsample_count.
-        The output is a dictionary, contianing 
-            "train_loader": the training dataset in the original class ratio.
-            "val_loader": the validation dataset in the original class ratio.
-            "test_loader": the test dataset in the original class ratio.
-            "train_loader_under": the resampled training dataset.
-            "val_timestamps": timestamp windows corresponding to the samples in the validation dataset.
-            "test_timestamps": timestamp windows corresponding to the samples in the test dataset.
+        Splits the dataset into training, validation, and test sets with optional undersampling/oversampling for 
+        class balancing. Shuffles only the training set indices, creates separate `DataLoader`s for each set.
+
+        Parameters:
+        -----------
+        minor_upsample_count : int
+            The number of samples for class 0 after resampling, by default 75000.
+        major_downsample_count : int
+            The number of samples for class 1 after resampling, by default 25000.
+
+        Returns:
+        --------
+        result : dict
+            Dictionary containing the `DataLoader`s and validation/test timestamps:
+                - "train_loader": `DataLoader` for training set.
+                - "val_loader": `DataLoader` for validation set.
+                - "test_loader": `DataLoader` for test set.
+                - "train_loader_under": `DataLoader` for undersampled training set.
+                - "val_timestamps": Timestamps for the validation set. Later used for the output plots.
+                - "test_timestamps": Timestamps for the test set. Later used for the output plots.
+
+        Notes:
+        ------
+        - Requires `raw_data_windows`, `binary_labels`, and `multiple_labels` to be generated in advance.
+        - Uses `apply_oversampling_and_undersampling_comp_up_down` to balance the dataset by specified sample counts.
         """
         if self.raw_data_windows is None or self.binary_labels is None or self.multiple_labels is None:
             print("ERROR: raw data windows and labels should be generated first.")
             return
 
-        # Convert raw data and labels to tensors
         samples = torch.tensor(self.raw_data_windows, dtype=torch.float64).unsqueeze(1).to(self.device)
 
         total_size = len(samples)
