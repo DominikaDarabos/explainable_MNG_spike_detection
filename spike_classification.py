@@ -10,13 +10,8 @@ start_time = time.time()
 module_path = os.path.abspath(os.path.join('..'))
 sys.path.append(module_path)
 
-# from Weighted_VP_model import *
-# sys.path.append(os.path.abspath('../Weighted_VP_model'))
-
-# from vpnet import *
-# from vpnet.vp_functions import *
 from _external.WHVPNet_pytorch.networks import *
-# from _external.WHVPNet_pytorch.vp_functions import *
+
 
 def train(model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, \
           n_epoch: int, optimizer: torch.optim.Optimizer, \
@@ -133,11 +128,14 @@ def full_training():
     lr = 0.01
     dtype = torch.float64
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-    window_size = 15
-    overlapping_size = 11
+    window_size = 13
+    overlapping_size = 10
 
-    MNG_dataloader = MicroneurographyDataloader()
-    MNG_dataloader_filepath = f'window_{window_size}_overlap_{overlapping_size}_corrected.pkl'
+    MNG_dataloader = MicroneurographyDataloader(raw_data_relative_path='../data/5_nerve/raw_data.csv',
+                                                spikes_relative_path='../data/5_nerve/spike_timestamps.csv',
+                                                stimulation_relative_path='../data/5_nerve/stimulation_timestamps.csv')
+    MNG_dataloader.get_statistics_of_spikes()
+    MNG_dataloader_filepath = f'window_{window_size}_overlap_{overlapping_size}_corrected_5nerve_and.pkl'
     full_path = os.path.join('../data', MNG_dataloader_filepath)
     if os.path.exists(full_path):
         print("Dataset loading.")
@@ -145,8 +143,8 @@ def full_training():
     else:
         print("Dataset generating.")
         MNG_dataloader.generate_raw_windows(window_size=window_size, overlapping=overlapping_size)
-        #dataSet.generate_labels()
-        MNG_dataloader.generate_labels_stimuli_relabel()
+        #MNG_dataloader.generate_labels()
+        MNG_dataloader.generate_labels_stimuli_relabel(negative_stimulus_limit=-9, positive_stimulus_limit=8, logigal_operator="or")
         MNG_dataloader.write_samples_and_labels_into_file(MNG_dataloader_filepath)
 
 
@@ -191,7 +189,7 @@ def full_training():
     accuracy, loss, all_binary_labels, all_multiple_labels, all_predicted_classes, all_predicted_probabilities = test(model, dataloaders['val_loader'], criterion, decision_boundary)
     compute_common_metrics(all_binary_labels, all_predicted_classes)
     compute_merged_metrics(all_binary_labels, all_predicted_classes)
-    create_decision_ceratinty_boxplots(all_binary_labels, all_multiple_labels, all_predicted_classes, all_predicted_probabilities)
+    #create_decision_ceratinty_boxplots(all_binary_labels, all_multiple_labels, all_predicted_classes, all_predicted_probabilities)
     print()
     #torch.save(model.state_dict(), f'trained_models/widnow_{window_size_}_overlapping_{overlapping_size_}_hidden_{hidden1}_nweight_{weight_num}_neuron_24')
 
