@@ -175,11 +175,14 @@ class MicroneurographyDataloader:
         print("Multi class labels count: ", value_counts)
 
 
-    def generate_labels_stimuli_relabel(self, negative_stimulus_limit, positive_stimulus_limit, logigal_operator):
+    def generate_labels_stimuli_relabel(self, logigal_operator):
         """
         The stimulus "arrives" approximately 40 datapoints later than it is marked. If the stimulus extreme values appear within
         round(40 / (self.window_size - self.overlapping)) number of windows after the marked timestamp, it is relabeled as class 1.
         If there are no high values in the window originally labeled as stimulus, it is relabeled to class 0.
+
+        The filter will get the most positive and most negative values. Based on the logical operator, the filter will get windows where the most negative and/or most positive values are present.
+        If that window is within the stimulus delay timeframe, and is was not an AP labeled window originally, it will be a stimulus.
 
         Label generation: if a spike ts is in the current timestamp window, the corresponding label will be positive for the respective value window. Otherwise, the label will be 0.
         Binary labels: Any spike occurence will be labeled as 1.
@@ -194,14 +197,13 @@ class MicroneurographyDataloader:
         counter_orig_1_but_0 = 0
         counter_orig_0_but_1 = 0
         counter_orig_1_and_1 = 0
-        counter_no_stimulation = 0
-        counter_stimuliby_filter_but_not_in_threshold = 0
         last_X_tracks = []
         relabel_threshold = round(40 / (self.window_size - self.overlapping))
-        print("RELABEL THRESHOLD:", relabel_threshold)
     
         print("Original spikes count:", self.all_spikes_df['track'].value_counts())
-
+        neg_limit = np.ceil(np.min(self.raw_data_windows))
+        poz_limit = np.floor(np.max(self.raw_data_windows))
+        print("relabel limits:", neg_limit, poz_limit)
         for i, (timestamp_window, data_window) in enumerate(zip(self.raw_timestamps_windows, self.raw_data_windows)):
             window_first_ts = timestamp_window[0]
             window_last_ts = timestamp_window[-1]
@@ -215,8 +217,8 @@ class MicroneurographyDataloader:
             # negative_limited = any(value <= -10 for value in data_window)
             # positive_limited = any(value >= 9 for value in data_window)
             # is_stimulation_by_filter = negative_limited and positive_limited
-            negative_limited = any(value <= negative_stimulus_limit for value in data_window)
-            positive_limited = any(value >= positive_stimulus_limit for value in data_window)
+            negative_limited = any(value <= neg_limit for value in data_window)
+            positive_limited = any(value >= poz_limit for value in data_window)
             if logigal_operator == 'and':
                 is_stimulation_by_filter = negative_limited and positive_limited
             elif logigal_operator == 'or':
@@ -238,8 +240,8 @@ class MicroneurographyDataloader:
                 elif track_value != 0:
                     multiple_labels_list.append(track_value)
                     binary_labels_list.append(1)
-                if track_value != 0 and track_value != 1 and is_stimulation_by_filter:
-                    print("WARNING: An AP window got through the stimulation filter. No label change.")
+                # if track_value != 0 and track_value != 1 and is_stimulation_by_filter:
+                #     print("WARNING: An AP window got through the stimulation filter. No label change.")
             elif len(spike_matching_rows) > 1:
                 print(f"WARNING: there are {len(spike_matching_rows)}  spike timestamps ({spike_matching_rows}) in window {i}.")
                 print("The multi class label is assigned to the first spike that appeared in the window.")
@@ -258,20 +260,19 @@ class MicroneurographyDataloader:
                         # Do not label as 1 since '1' not in last X 'track' values
                         multiple_labels_list.append(0)
                         binary_labels_list.append(0)
-                        counter_stimuliby_filter_but_not_in_threshold += 1
                 else:
                     multiple_labels_list.append(0)
                     binary_labels_list.append(0)
-                    counter_no_stimulation += 1
         print("Relabel statistics:")
         print("Originally stimulation label but not stimulation: ", counter_orig_1_but_0)
         print("Originally stimulation label and stimulation indeed: ", counter_orig_1_and_1)
         print("Originally not stimulation label but is stimulation: ", counter_orig_0_but_1)
-        print("Originally not stimulation label and not stimulation: ", counter_no_stimulation)
-        print(f"Stimulus according to the filter, but stimulus ts is not in the last {relabel_threshold} track: ", counter_stimuliby_filter_but_not_in_threshold)
         value_counts = Counter(multiple_labels_list)
-
         print("Multi class labels count: ", value_counts)
+
+        max_ = max(multiple_labels_list)+1
+        if len(set(multiple_labels_list)) != max_:
+            raise RuntimeError("ERROR: problem with the stimuli relabel filtering. There are no windows that fell under the filter, resulting in no instance of a stimulus window.")
 
         self.binary_labels = torch.tensor(binary_labels_list, dtype=torch.int64)
         self.multiple_labels = torch.tensor(multiple_labels_list, dtype=torch.int64)
@@ -595,29 +596,17 @@ class MicroneurographyDataloader:
     """
 
     def get_statistics_of_spikes(self):
-        time_diffs = self.all_spikes_df['ts'].diff().dropna()
-        min_gap = time_diffs.min()
-        max_gap = time_diffs.max()
-
         indices = self.raw_data_df.index[self.raw_data_df['raw_ts'].isin(self.all_spikes_df['ts'])].tolist()
 
         index_diffs = np.diff(indices)
         min_index_gap = index_diffs.min()
         max_index_gap = index_diffs.max()
 
-        print(f'Minimum index gap between spike timestamps: {min_index_gap}')
-        print(f'Maximum index gap between spike timestamps: {max_index_gap}')
+        print(f'Min index gap between spike timestamps: {min_index_gap}')
+        print(f'Max index gap between spike timestamps: {max_index_gap}')
 
-        print(f"Minimum time gap between spike timestamps: {min_gap}")
-        print(f"Maximum time gap between spike timestamps: {max_gap}")
-
-        raw_time_diffs = self.raw_data_df['raw_ts'].diff().dropna()
-        print(f"Minimum gap between sampled values: {raw_time_diffs.min()}") # 0.00009999999929277692
-        print(f"Spike min gap / sample freq gap: {min_gap / raw_time_diffs.min()}")
     
     def get_value_statistics_for_classes(self):
-        # multiple_labels = np.array(self.multiple_labels)
-        # raw_data_windows = np.array(self.raw_data_windows)
         print("=" * 40)
         print("Value statistics")
         print("=" * 40)
@@ -633,3 +622,12 @@ class MicroneurographyDataloader:
             else:
                 print(f"No windows found for label {label}.")
         print("=" * 40)
+    
+    def get_statistics_of_labels(self):
+        print("=" * 40)
+        print("Label Statistics")
+        print("=" * 40)
+
+        label_count = Counter(self.multiple_labels.tolist())
+        for label, count in label_count.items():
+            print(f"Label {label}: {count}")

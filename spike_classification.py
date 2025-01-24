@@ -135,7 +135,7 @@ def full_training():
                                                 spikes_relative_path='../data/5_nerve/spike_timestamps.csv',
                                                 stimulation_relative_path='../data/5_nerve/stimulation_timestamps.csv')
     MNG_dataloader.get_statistics_of_spikes()
-    MNG_dataloader_filepath = f'window_{window_size}_overlap_{overlapping_size}_corrected_5nerve_and.pkl'
+    MNG_dataloader_filepath = f'window_{window_size}_overlap_{overlapping_size}_corrected_and_.pkl'
     full_path = os.path.join('../data', MNG_dataloader_filepath)
     if os.path.exists(full_path):
         print("Dataset loading.")
@@ -144,14 +144,14 @@ def full_training():
         print("Dataset generating.")
         MNG_dataloader.generate_raw_windows(window_size=window_size, overlapping=overlapping_size)
         #MNG_dataloader.generate_labels()
-        MNG_dataloader.generate_labels_stimuli_relabel(negative_stimulus_limit=-9, positive_stimulus_limit=8, logigal_operator="or")
+        MNG_dataloader.generate_labels_stimuli_relabel(logigal_operator="or")
         MNG_dataloader.write_samples_and_labels_into_file(MNG_dataloader_filepath)
 
 
     dataloaders = MNG_dataloader.sequential_split_with_resampling(batch_size=1024, minor_upsample_count=25000, major_downsample_count=75000)
 
     MNG_dataloader.get_value_statistics_for_classes()
-    
+    MNG_dataloader.get_statistics_of_labels()
 
     if torch.cuda.is_available():
         torch.backends.cudnn.benchmark = False
