@@ -5,35 +5,41 @@ import seaborn as sns
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+import json
+
 
 def compare_predictions_to_multilabels(all_binary_labels, all_multiple_labels, all_predictions):
     """
-    Calculate how many TP, FN, FP, TN instances are for every label.
+    Calculate how many TP, FN, FP, TN instances are for every label and return results as JSON.
     """
     multiple_num = len(torch.unique(all_multiple_labels))
-    TP_counts = torch.zeros(multiple_num)
-    FN_counts = torch.zeros(multiple_num)
-    FP_counts = torch.zeros(multiple_num)
-    TN_counts = torch.zeros(multiple_num)
+    results = {}
 
     for i in range(multiple_num):
         label_indices = torch.where(all_multiple_labels == i)[0]
         binary_labels_for_label = all_binary_labels[label_indices]
         predictions_for_label = all_predictions[label_indices]
 
-        TP_counts[i] = torch.sum((binary_labels_for_label == 1) & (predictions_for_label == 1))
-        FN_counts[i] = torch.sum((binary_labels_for_label == 1) & (predictions_for_label == 0))
-        FP_counts[i] = torch.sum((binary_labels_for_label == 0) & (predictions_for_label == 1))
-        TN_counts[i] = torch.sum((binary_labels_for_label == 0) & (predictions_for_label == 0))
-
+        if i == 0:  # For class 0: only FP and TN
+            FP = torch.sum((binary_labels_for_label == 0) & (predictions_for_label == 1)).item()
+            TN = torch.sum((binary_labels_for_label == 0) & (predictions_for_label == 0)).item()
+            results[f"Label {i}"] = {
+                "TN": TN,
+                "FP": FP
+            }
+        else:  # For other classes: only TP and FN
+            TP = torch.sum((binary_labels_for_label == 1) & (predictions_for_label == 1)).item()
+            FN = torch.sum((binary_labels_for_label == 1) & (predictions_for_label == 0)).item()
+            results[f"Label {i}"] = {
+                "TP": TP,
+                "FN": FN
+            }
     print("=" * 40)
-    for i in range(multiple_num):
-        print(f"Label {i}:")
-        print(f"  TP: {TP_counts[i].item()}")
-        print(f"  FN: {FN_counts[i].item()}")
-        print(f"  FP: {FP_counts[i].item()}")
-        print(f"  TN: {TN_counts[i].item()}\n")
+    print("Window-wise multi-class comparison")
     print("=" * 40)
+    print(json.dumps(results, indent=4))
+    print("=" * 40)
+    return results
 
 
 def create_decision_ceratinty_boxplots(all_binary_labels, all_multiple_labels, all_predictions, all_probabilities):
@@ -140,24 +146,26 @@ def compute_common_metrics(y_true, y_pred):
     fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
     roc_auc = roc_auc_score(y_true, y_pred)
     #f2 = (5 * precision * recall) / (4  * precision + recall) if (4  * precision + recall) > 0 else 0.0
-    
+
+    common_metrics = {
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "fpr": round(fpr, 4),
+        "roc_auc": round(roc_auc, 4),
+        "confusion_matrix": {
+            "TN": int(tn),
+            "FP": int(fp),
+            "FN": int(fn),
+            "TP": int(tp),
+        }
+    }
+
     print("=" * 40)
-    print("           MODEL METRICS          ")
+    print("Common Metrics")
     print("=" * 40)
-    print(f"Precision     : {precision:.4f}")
-    print(f"Recall        : {recall:.4f}")
-    print(f"FPR           : {fpr:.4f}")
-    print(f"ROC-AUC       : {roc_auc:.4f}")
-    #print(f"F2-Score      : {f2:.4f}")
+    print(json.dumps(common_metrics, indent=4))
     print("=" * 40)
-    print("       CONFUSION MATRIX           ")
-    print("=" * 40)
-    print(f"              Predicted")
-    print(f"          {conf_matrix[0][0]}    {conf_matrix[0][1]}")
-    print(f"Actual    {conf_matrix[1][0]}    {conf_matrix[1][1]}")
-    
-       
-    return f"precision: {precision}, recall: {recall}, matrix: {conf_matrix}, roc_auc: {roc_auc}"
+    return common_metrics
 
 
 
@@ -190,24 +198,18 @@ def compute_merged_metrics(y_true, y_pred):
             else:
                 idx += 1
         return merged_indices
-
-
+    
+    # def len_stats(group):
+    #     length_counts = Counter([group_len for _, group_len in group])
+    #     return dict(length_counts)
+    
     def len_stats(group):
-        print("Quantity: ", len(group))
-        length_counts = {}
-
-        for idx, group_len in group:
-            if group_len in length_counts:
-                length_counts[group_len] += 1
-            else:
-                length_counts[group_len] = 1
-        
-        print("Length : count")
-        for length in sorted(length_counts.keys()):
-            print(f"{length}: {length_counts[length]}")
-
-
-
+        length_counts = Counter([group_len for _, group_len in group])
+        total_count = sum(length_counts.values())
+        return {
+            "sum": total_count,
+            "length_counter": dict(length_counts)
+        }
 
     pred_intervals = merge_positive_predictions(y_pred)
     true_intervals = merge_positive_predictions(y_true)
@@ -253,34 +255,33 @@ def compute_merged_metrics(y_true, y_pred):
             FN_indices.append((t_start, t_length))
 
     recall_merged = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    
+
+    # FP_counter = dict(Counter(FP_indices))
+    # num_FP = len(FP_counter)
+    # num_windows = len(y_true)
+    # num_datapoints = num_windows * (window_size - overlapping_size)
+    # samples_per_minute = 10000 * 60
+    # num_minutes = num_datapoints / samples_per_minute
+    # fpr_per_minute = num_FP / num_minutes
+    # print("Avg number of false positives per minute:", fpr_per_minute)
+
+    results = {
+        "metrics": {
+            "recall": recall_merged,
+        },
+        "ground_truth_positive": len_stats(true_intervals),
+        "true_positive": len_stats(TP_indices),
+        "false_positive": len_stats(FP_indices),
+        "false_negative": len_stats(FN_indices),
+    }
+
     print("=" * 40)
-    print("MERGED METRICS")
+    print("Merged Metrics")
     print("=" * 40)
-    print("recall", recall_merged)
-    print("-" * 40)
-    print("GROUND TRUTH POSITIVE")
-    GT_counter = dict(Counter(true_intervals))
-    len_stats(GT_counter)
+    print(json.dumps(results, indent=4))
+    print("=" * 40)
 
-    print("-" * 40)
-    print("TRUE POSITIVE")
-    TP_counter = dict(Counter(TP_indices))
-    len_stats(TP_counter)
-
-    print("-" * 40)
-    print("FALSE POSITIVE")
-    FP_counter = dict(Counter(FP_indices))
-    len_stats(FP_counter)
-
-    print("-" * 40)
-    print("FALSE NEGATIVE")
-    FN_counter = dict(Counter(FN_indices))
-    len_stats(FN_counter)
-
-    print("-" * 40)
-    print("-" * 40)
-
+    return results
 
 
     # # Find the indices for TP, FN, FP
