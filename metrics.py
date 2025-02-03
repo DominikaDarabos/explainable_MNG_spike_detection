@@ -169,16 +169,29 @@ def compute_common_metrics(y_true, y_pred):
 
 
 
-def compute_merged_metrics(y_true, y_pred):
-    y_true = y_true.cpu().numpy()
-    y_pred = y_pred.cpu().numpy()
+def generate_filtered_intervals(y_pred, multiple_labels, majority_voting = False, relative_distance_threshold = 0):
+    def split_into_stimulus_pieces(multiple_labels):
+        """
+        Split the data by stimulus labels. If multiple are next to each other, the first one is used.
+        """
+        pieces = []
+        start = 0
+        i = 0
 
-    def ranges_overlap(x_start, x_end, y_start, y_end):
-        return (x_start < y_end and x_end > y_start) #  or (y_start < x_end and y_end > x_start)
+        while i < len(multiple_labels):
+            if multiple_labels[i] == 1:
+                pieces.append((start, i))
+                start = i
+                while i < len(multiple_labels) and multiple_labels[i] == 1:
+                    i += 1
+                continue
+            i += 1
+        pieces.append((start, i))
+        return pieces
 
     def merge_positive_predictions(y_pred, false_factor=0):
         """
-        Create a list filled with pairs. The first element of the pair shows where a positive window is after a negative one, and the second is for how long the consecutive windows are posititive afterwards.
+        Identify (start, length) pairs for positive predictions.
         """
         merged_indices = []
         idx = 0
@@ -194,38 +207,89 @@ def compute_merged_metrics(y_true, y_pred):
                     else:
                         gap += 1
                     idx += 1
+
+                if majority_voting and length == 1:
+                    continue
+                
                 merged_indices.append((start, length))
             else:
                 idx += 1
         return merged_indices
+
+    def filter_intervals_by_pieces(intervals, pieces):
+        """
+        Keep only positive prediction intervals that are relatively close in consecutive pieces defined by stimulus.
+        """
+        valid_intervals = []
+        
+        for i in range(len(pieces) - 1):  
+            start1, end1 = pieces[i]  
+            start2, end2 = pieces[i + 1]
+
+            intervals_piece_one = []
+            intervals_piece_two = []
+
+            for p_start, p_length in intervals:
+                p_end = p_start + p_length
+
+                # Interval in first piece
+                if start1 <= p_start < end1:
+                    rel_start = p_start - start1  
+                    rel_end = p_end - start1  
+                    intervals_piece_one.append((p_start, p_length, rel_start, rel_end))
+
+                # Interval in second piece
+                elif start2 <= p_start < end2:
+                    rel_start = p_start - start2  
+                    rel_end = p_end - start2  
+                    intervals_piece_two.append((p_start, p_length, rel_start, rel_end))
+                
+
+            for p1_start, p1_length, rel1_start, rel1_end in intervals_piece_one:
+                for p2_start, p2_length, rel2_start, rel2_end in intervals_piece_two:
+                    # Check if intervals are within the max_gap OR overlap
+                    if (rel1_end >= rel2_start and rel1_start <= rel2_end) or \
+                        (abs(rel1_end - rel2_start) <= relative_distance_threshold) or \
+                        (abs(rel2_end - rel1_start) <= relative_distance_threshold):
+                        if (p1_start, p1_length) not in valid_intervals:
+                            valid_intervals.append((p1_start, p1_length))
+                        if (p2_start, p2_length) not in valid_intervals:
+                            valid_intervals.append((p2_start, p2_length))
+
+        valid_intervals.sort(key=lambda x: x[0])
+        return valid_intervals
+
+    pieces = split_into_stimulus_pieces(multiple_labels)
+    pred_intervals = merge_positive_predictions(y_pred)
+
+    if relative_distance_threshold != 0:
+        pred_intervals = filter_intervals_by_pieces(pred_intervals, pieces)
+
+    return pred_intervals
+
+
+
+def compute_merged_metrics(y_true, y_pred, multiple_labels, majority_voting = False, relative_distance_threshold = 0):
+    y_true = y_true.cpu().numpy()
+    y_pred = y_pred.cpu().numpy()
+    multiple_labels = multiple_labels.cpu().numpy()
     
-    # def len_stats(group):
-    #     length_counts = Counter([group_len for _, group_len in group])
-    #     return dict(length_counts)
+    def ranges_overlap(x_start, x_end, y_start, y_end):
+        return (x_start < y_end and x_end > y_start)
+
     
     def len_stats(group):
         length_counts = Counter([group_len for _, group_len in group])
         total_count = sum(length_counts.values())
-        return {
-            "sum": total_count,
-            "length_counter": dict(length_counts)
-        }
+        return {"sum": total_count, "length_counter": dict(length_counts)}
 
-    pred_intervals = merge_positive_predictions(y_pred)
-    true_intervals = merge_positive_predictions(y_true)
+    pred_intervals = generate_filtered_intervals(y_pred, multiple_labels, majority_voting=majority_voting, relative_distance_threshold=relative_distance_threshold)
+    true_intervals = generate_filtered_intervals(y_true, multiple_labels, majority_voting=False, relative_distance_threshold=0)
     
-    tp = 0
-    fp = 0
-    fn = 0
-    pred_length_counts = Counter()
-    true_length_counts = Counter()
-
-    FP_indices = []
-    TP_indices = []
-    FN_indices = []
-
+    tp, fp, fn = 0, 0, 0
+    FP_indices, TP_indices, FN_indices = [], [], []
+    
     for p_start, p_length in pred_intervals:
-        pred_length_counts[p_length] += 1
         p_end = p_start + p_length
         overlap = False
         for t_start, t_length in true_intervals:
@@ -241,7 +305,6 @@ def compute_merged_metrics(y_true, y_pred):
             FP_indices.append((p_start, p_length))
 
     for t_start, t_length in true_intervals:
-        true_length_counts[t_length] += 1
         t_end = t_start + t_length
 
         overlap = False
@@ -253,18 +316,9 @@ def compute_merged_metrics(y_true, y_pred):
         if not overlap:
             fn += 1
             FN_indices.append((t_start, t_length))
-
+    
     recall_merged = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-
-    # FP_counter = dict(Counter(FP_indices))
-    # num_FP = len(FP_counter)
-    # num_windows = len(y_true)
-    # num_datapoints = num_windows * (window_size - overlapping_size)
-    # samples_per_minute = 10000 * 60
-    # num_minutes = num_datapoints / samples_per_minute
-    # fpr_per_minute = num_FP / num_minutes
-    # print("Avg number of false positives per minute:", fpr_per_minute)
-
+    
     results = {
         "metrics": {
             "recall": recall_merged,
@@ -274,13 +328,13 @@ def compute_merged_metrics(y_true, y_pred):
         "false_positive": len_stats(FP_indices),
         "false_negative": len_stats(FN_indices),
     }
-
+    
     print("=" * 40)
     print("Merged Metrics")
     print("=" * 40)
     print(json.dumps(results, indent=4))
     print("=" * 40)
-
+    
     return results
 
 
