@@ -1,3 +1,19 @@
+"""
+VPNet publication:
+-----------------
+Kovács P, Bognár G, Huber C, Huemer M. VPNET: Variable Projection Networks. Int J Neural Syst. 2022 Jan;32(1):2150054.
+doi: 10.1142/S0129065721500544.
+Epub 2021 Oct 13. PMID: 34651549.
+
+
+Weighted Hermite VPNet publication:
+----------------------------------
+T. Dózsa, C. Böck, J. Meier and P. Kovács,
+"Weighted Hermite Variable Projection Networks for Classifying Visually Evoked Potentials,"
+in IEEE Transactions on Neural Networks and Learning Systems, 2024
+doi: 10.1109/TNNLS.2024.3475271.
+"""
+
 import torch
 from .vp_functions import *
 from typing import Any, Callable, Optional
@@ -41,54 +57,6 @@ def FCNN(n_in: int, n_channels: int, n_hiddens: list[int], n_out: int,
     layers = _fcnn(n_in, n_channels, n_hiddens, n_out, nonlinear, device, dtype)
     return torch.nn.Sequential(*layers)
 
-def CNN1D(n_in: int, n_channels: list[int],
-        conv_kernel_sizes: list[int], pool_kernel_sizes: list[int],
-        n_hiddens: list[int], n_out: int,
-        conv_nonlinear: Callable[[], torch.nn.Module] = torch.nn.ReLU,
-        nonlinear: Callable[[], torch.nn.Module] = torch.nn.ReLU,
-        device: Optional[torch.device] = None, dtype: Optional[torch.dtype] = None) \
-        -> torch.nn.Sequential:
-    assert len(n_channels) >= 2
-    assert len(n_channels) == len(conv_kernel_sizes)+1
-    assert len(conv_kernel_sizes) == len(pool_kernel_sizes)
-    '''
-    Builder function for simple convolutional neural network in 1D.
-    
-    Input:
-        n_in: int                       Input dimension.
-        n_channels: list[int]           List of number of channels: for input
-                                        and for convolutional layers.
-        conv_kernel_sizes: list[int]    List of convolutional kernel sizes.
-        pool_kernel_sizes: list[int]    List of pooling kernel sizes.
-        n_hiddens: list[int]            Neurons of fully connected layers.
-        n_out: int                      Output dimension.
-        conv_nonlinear: Callable[[], torch.nn.Module]
-                                        Builder of nonlinear activation for
-                                        the convolutional part.
-                                        Default: torch.nn.ReLU
-        nonlinear: Callable[[], torch.nn.Module]
-                                        Builder of nonlinear activation for
-                                        the fully connected part.
-                                        Default: torch.nn.ReLU
-        device: Optional[torch.device]  Pytorch device. Default: None
-        dtype: Optional[torch.dtype]    Tensor data type. Default: None
-    Output:
-        cnn: torch.nn.Sequential        Convolutional neural network of 
-                                        convolutional layers, nonlinear 
-                                        activation, and max pooling,
-                                        followed by a fully connected part.
-    '''
-    conv_layers = []
-    n0 = n_in
-    for i in range(len(n_channels)-1):
-        conv_layers.append(torch.nn.Conv1d(n_channels[i], n_channels[i+1],
-            conv_kernel_sizes[i], device=device, dtype=dtype))
-        conv_layers.append(conv_nonlinear().to(device=device, dtype=dtype))
-        n0 = n0 - conv_kernel_sizes[i] + 1
-        conv_layers.append(torch.nn.MaxPool1d(pool_kernel_sizes[i]))
-        n0 = n0 // pool_kernel_sizes[i]
-    fcnn_layers = _fcnn(n0, n_channels[-1], n_hiddens, n_out, nonlinear, device, dtype)
-    return torch.nn.Sequential(*conv_layers, *fcnn_layers)
 
 class VPTypes(Enum):
     '''Output selector for VPNet.'''

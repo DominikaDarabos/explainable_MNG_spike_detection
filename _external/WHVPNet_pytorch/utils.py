@@ -1,3 +1,7 @@
+"""
+PyTorch implementation of the weighted Hermite functions.
+"""
+
 import torch
 import math
 

@@ -1,3 +1,19 @@
+"""
+VPNet publication:
+-----------------
+Kovács P, Bognár G, Huber C, Huemer M. VPNET: Variable Projection Networks. Int J Neural Syst. 2022 Jan;32(1):2150054.
+doi: 10.1142/S0129065721500544.
+Epub 2021 Oct 13. PMID: 34651549.
+
+
+Weighted Hermite VPNet publication:
+----------------------------------
+T. Dózsa, C. Böck, J. Meier and P. Kovács,
+"Weighted Hermite Variable Projection Networks for Classifying Visually Evoked Potentials,"
+in IEEE Transactions on Neural Networks and Learning Systems, 2024
+doi: 10.1109/TNNLS.2024.3475271.
+"""
+
 import math
 import torch
 from typing import Any, Callable
@@ -338,6 +354,7 @@ class VPFun(torch.autograd.Function):
         #print("Shape of phi:", phi.shape)
         
         phip = torch.linalg.pinv(phi, rtol=1e-15)#1e-15)   # (num_samples,num_coeffs)
+        x= x.to(dtype=torch.float64)
         coeffs = x @ phip               # (batch,*,num_coeffs), coefficients
         x_hat = coeffs @ phi            # (batch,*,num_samples), approximations
         res = x - x_hat                 # (batch,*,num_samples), residual vectors

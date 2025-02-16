@@ -1,3 +1,7 @@
+"""
+Tensorflow implementation of the weighted Hermite functions.
+"""
+
 import tensorflow as tf
 import math
 import numpy as np

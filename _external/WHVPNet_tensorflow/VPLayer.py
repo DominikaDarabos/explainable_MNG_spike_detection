@@ -1,3 +1,6 @@
+"""
+TensorFlow implementation of the custom VPLayer.
+"""
 import tensorflow as tf
 from .ada_weighted_hermite_tf import *
 
