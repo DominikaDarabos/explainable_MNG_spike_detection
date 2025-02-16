@@ -11,7 +11,7 @@ import pickle
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 from sklearn.cluster import KMeans
 from collections import Counter
-import matplotlib.cm as cm
+pd.set_option('future.no_silent_downcasting', True)
 
 
 class MicroneurographyDataloader:
@@ -69,7 +69,7 @@ class MicroneurographyDataloader:
     Private, utils
     """
 
-    def read_csv_into_df(self, relative_path):
+    def read_csv_into_df(self, relative_path: str):
         csv_path = os.path.abspath(relative_path)
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"ERROR: file at {csv_path} does not exist.")
@@ -105,7 +105,7 @@ class MicroneurographyDataloader:
         all_spike['track'] = all_spike['track'].replace(self.track_replacement_dict).infer_objects(copy=False)
         return all_spike
 
-    def slice_overlapping_raw_data_windows(self, df, column_name):
+    def slice_overlapping_raw_data_windows(self, df: pd.DataFrame, column_name: str):
         stride = self.window_size - self.overlapping
         # windows_matrix = np.array([df[column_name].values[i:i + self.window_size] for i in range(0, len(df) - self.window_size + 1, stride)])
         # return windows_matrix
@@ -120,7 +120,7 @@ class MicroneurographyDataloader:
     Public
     """
     
-    def generate_raw_windows(self, window_size, overlapping = 0):
+    def generate_raw_windows(self, window_size: int, overlapping: int = 0):
         """
         Slice windows for the raw data values and timestamps seperately, but with the same size attributes.
         The given window size and overlapping size are saved as class attribute so that when the class instance is saved, these base parameters can be easily accessed again.
@@ -175,7 +175,7 @@ class MicroneurographyDataloader:
         print("Multi class labels count: ", value_counts)
 
 
-    def generate_labels_stimuli_relabel(self, logigal_operator):
+    def generate_labels_stimuli_relabel(self, logigal_operator: str):
         """
         The stimulus "arrives" approximately 40 datapoints later than it is marked. If the stimulus extreme values appear within
         round(40 / (self.window_size - self.overlapping)) number of windows after the marked timestamp, it is relabeled as class 1.
@@ -279,7 +279,7 @@ class MicroneurographyDataloader:
         self.binary_labels_onehot = self.one_hot_encode(self.binary_labels, 2).to(self.device).to(dtype=torch.float32)
         self.multiple_labels_onehot = self.one_hot_encode(self.multiple_labels, len(torch.unique(self.multiple_labels))).to(self.device).to(dtype=torch.float32)
 
-    def sequential_split_with_resampling(self, batch_size, minor_upsample_count=25000, major_downsample_count=75000):
+    def sequential_split_with_resampling(self, batch_size: int, minor_upsample_count: int =25000, major_downsample_count: int =75000):
         """
         Splits the dataset into training, validation, and test sets with optional undersampling/oversampling for 
         class balancing. Shuffles only the training set indices, creates separate `DataLoader`s for each set.
@@ -354,7 +354,7 @@ class MicroneurographyDataloader:
         return result
 
 
-    def apply_random_undersampling(self, samples, binary_labels_onehot, multiple_labels_onehot):
+    def apply_random_undersampling(self, samples: torch.Tensor, binary_labels_onehot: torch.Tensor, multiple_labels_onehot: torch.Tensor):
         """
         Undersample the negative class to the amount of the positive class for a balanced dataset.
         """
@@ -380,7 +380,7 @@ class MicroneurographyDataloader:
 
         return samples_tensor, binary_labels_tensor, multiple_labels_tensor
     
-    def apply_oversampling_and_undersampling(self, samples, binary_labels_onehot, multiple_labels_onehot, upsample_count, downsample_count):
+    def apply_oversampling_and_undersampling(self, samples: torch.Tensor, binary_labels_onehot: torch.Tensor, multiple_labels_onehot: torch.Tensor, upsample_count: int, downsample_count:int ):
         """
         Upsample the positive class to the amount of upsample_count and downsample the negative class to the amount of downsample_count.
         """
@@ -411,7 +411,7 @@ class MicroneurographyDataloader:
         return samples_tensor, binary_labels_tensor, multiple_labels_tensor
     
 
-    def apply_complex_oversampling_and_undersampling(self, samples, binary_labels_onehot, multiple_labels_onehot, upsample_count, downsample_count):
+    def apply_complex_oversampling_and_undersampling(self, samples: torch.Tensor, binary_labels_onehot: torch.Tensor, multiple_labels_onehot: torch.Tensor, upsample_count: int, downsample_count: int):
         """
         Upsample the positive class to the amount of upsample_count, but the repetitive samples are only from the action potentials excluding the stimulus samples.
         Downsample the negative class to the amount of downsample_count.
@@ -461,7 +461,7 @@ class MicroneurographyDataloader:
         return samples_tensor, binary_labels_tensor, multiple_labels_tensor
 
 
-    def apply_clustered_undersampling(self, samples, binary_labels_onehot, multiple_labels_onehot, num_clusters=10):
+    def apply_clustered_undersampling(self, samples: torch.Tensor, binary_labels_onehot: torch.Tensor, multiple_labels_onehot: torch.Tensor, num_clusters=10):
         """
         Downsampling the negative class to the amount of positive class. The selected samples are drawn from predefined clusters equally.
         """
@@ -504,7 +504,7 @@ class MicroneurographyDataloader:
         return samples_tensor, binary_labels_tensor, multiple_labels_tensor
 
     
-    def write_samples_and_labels_into_file(self, file_path):
+    def write_samples_and_labels_into_file(self, file_path: str):
         full_path = os.path.join('../data', file_path)
         params = {
                 'raw_data_windows': self.raw_data_windows,
@@ -520,7 +520,7 @@ class MicroneurographyDataloader:
             pickle.dump(params, file)
 
 
-    def load_samples_and_labels_from_file(self, file_path):
+    def load_samples_and_labels_from_file(self, file_path: str):
         full_path = os.path.join('../data', file_path)
 
         if os.path.exists(full_path):
@@ -542,7 +542,7 @@ class MicroneurographyDataloader:
     Plotting
     """
 
-    def plot_raw_data_window_by_label(self, track_id, subplot_length):
+    def plot_raw_data_window_by_label(self, track_id: int, subplot_length: int):
         """
         Plot the first {subplot_length} windows that are labeled as class {track_id}.
         """

@@ -51,6 +51,7 @@ def train(model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, \
 
 
         precision = total_true_positives / (total_true_positives + total_false_positives) if total_true_positives + total_false_positives > 0 else 0.0
+        fpr = total_false_positives / (total_false_positives + total_true_negatives) if (total_false_positives + total_true_negatives) > 0 else 0.0
         recall = total_true_positives / (total_true_positives + total_false_negatives) if total_true_positives + total_false_negatives > 0 else 0.0
         total_accuracy /= total_length / 100
         avg_loss = total_loss / len(data_loader)
@@ -61,7 +62,7 @@ def train(model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, \
         balanced_accuracy = 0.5 * (sensitivity + specificity)
 
         print(f'Epoch: {epoch+1:0{n_digits}d} / {n_epoch}, '
-              f'accuracy: {total_accuracy:.2f}%, loss: {total_loss:.4f}, '
+              f'accuracy: {total_accuracy:.2f}%, loss: {total_loss:.4f}, FPR: {fpr:.4f} '
               f'Precision: {precision:.4f}, Recall: {recall:.4f}, '
               f'Balanced Accuracy: {balanced_accuracy:.4f}')
 
@@ -122,20 +123,20 @@ def test(model: torch.nn.Module, data_loader: torch.utils.data.DataLoader, \
         print(f'Weighted Balanced Accuracy: {balanced_accuracy:.4f}')
         return total_accuracy, total_loss, all_binary_labels, all_multiple_labels, all_predicted_classes, all_predicted_probabilities
 
-def full_training():
+def full_VPNet_training():
     decision_boundary = 0.8
     epoch = 10
     lr = 0.01
     dtype = torch.float64
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-    window_size = 13
-    overlapping_size = 10
+    window_size = 15
+    overlapping_size = 11
 
-    MNG_dataloader = MicroneurographyDataloader(raw_data_relative_path='../data/5_nerve/raw_data.csv',
-                                                spikes_relative_path='../data/5_nerve/spike_timestamps.csv',
-                                                stimulation_relative_path='../data/5_nerve/stimulation_timestamps.csv')
+    MNG_dataloader = MicroneurographyDataloader(raw_data_relative_path='../data/raw_data.csv',
+                                                spikes_relative_path='../data/spike_timestamps.csv',
+                                                stimulation_relative_path='../data/stimulation_timestamps.csv')
     MNG_dataloader.get_statistics_of_spikes()
-    MNG_dataloader_filepath = f'window_{window_size}_overlap_{overlapping_size}_corrected_and_.pkl'
+    MNG_dataloader_filepath = f'window_{window_size}_overlap_{overlapping_size}_corrected.pkl'
     full_path = os.path.join('../data', MNG_dataloader_filepath)
     if os.path.exists(full_path):
         print("Dataset loading.")
@@ -188,16 +189,14 @@ def full_training():
     print("VALIDATION/TESTING:")
     accuracy, loss, all_binary_labels, all_multiple_labels, all_predicted_classes, all_predicted_probabilities = test(model, dataloaders['val_loader'], criterion, decision_boundary)
     compute_common_metrics(all_binary_labels, all_predicted_classes)
-    compute_merged_metrics(all_binary_labels, all_predicted_classes)
+    compute_merged_metrics(all_binary_labels, all_predicted_classes, all_multiple_labels, proximity_rule=False, latency_threshold=0)
     #create_decision_ceratinty_boxplots(all_binary_labels, all_multiple_labels, all_predicted_classes, all_predicted_probabilities)
     print()
     #torch.save(model.state_dict(), f'trained_models/widnow_{window_size_}_overlapping_{overlapping_size_}_hidden_{hidden1}_nweight_{weight_num}_neuron_24')
 
 
 if __name__ == '__main__':
-    full_training()
-
-
+    full_VPNet_training()
     # MNG_dataloader = MicroneurographyDataloader()
     # filename = 'window_15_overlap_11_corrected.pkl'
     # MNG_dataloader.load_samples_and_labels_from_file(filename)

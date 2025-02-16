@@ -145,7 +145,6 @@ def compute_common_metrics(y_true, y_pred):
     tn, fp, fn, tp = conf_matrix.ravel()
     fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
     roc_auc = roc_auc_score(y_true, y_pred)
-    #f2 = (5 * precision * recall) / (4  * precision + recall) if (4  * precision + recall) > 0 else 0.0
 
     common_metrics = {
         "precision": round(precision, 4),
@@ -169,7 +168,12 @@ def compute_common_metrics(y_true, y_pred):
 
 
 
-def generate_filtered_intervals(y_pred, multiple_labels, majority_voting = False, relative_distance_threshold = 0):
+def generate_filtered_intervals(y_pred, multiple_labels, proximity_rule: bool = False, latency_threshold: int = 0):
+    """
+    Neighboring positive windows are merged into an interval, storing their location index and length.
+    proximity_rule: If True, intervals with a length of one are not considered valid positive intervals.
+    latency_threshold: The threshold determines how relatively close two positive intervals must be to each other in consecutive stimulation split windows.
+    """
     def split_into_stimulus_pieces(multiple_labels):
         """
         Split the data by stimulus labels. If multiple are next to each other, the first one is used.
@@ -208,7 +212,7 @@ def generate_filtered_intervals(y_pred, multiple_labels, majority_voting = False
                         gap += 1
                     idx += 1
 
-                if majority_voting and length == 1:
+                if proximity_rule and length == 1:
                     continue
                 
                 merged_indices.append((start, length))
@@ -249,8 +253,8 @@ def generate_filtered_intervals(y_pred, multiple_labels, majority_voting = False
                 for p2_start, p2_length, rel2_start, rel2_end in intervals_piece_two:
                     # Check if intervals are within the max_gap OR overlap
                     if (rel1_end >= rel2_start and rel1_start <= rel2_end) or \
-                        (abs(rel1_end - rel2_start) <= relative_distance_threshold) or \
-                        (abs(rel2_end - rel1_start) <= relative_distance_threshold):
+                        (abs(rel1_end - rel2_start) <= latency_threshold) or \
+                        (abs(rel2_end - rel1_start) <= latency_threshold):
                         if (p1_start, p1_length) not in valid_intervals:
                             valid_intervals.append((p1_start, p1_length))
                         if (p2_start, p2_length) not in valid_intervals:
@@ -262,14 +266,14 @@ def generate_filtered_intervals(y_pred, multiple_labels, majority_voting = False
     pieces = split_into_stimulus_pieces(multiple_labels)
     pred_intervals = merge_positive_predictions(y_pred)
 
-    if relative_distance_threshold != 0:
+    if latency_threshold != 0:
         pred_intervals = filter_intervals_by_pieces(pred_intervals, pieces)
 
     return pred_intervals
 
 
 
-def compute_merged_metrics(y_true, y_pred, multiple_labels, majority_voting = False, relative_distance_threshold = 0):
+def compute_merged_metrics(y_true, y_pred, multiple_labels, proximity_rule = False, latency_threshold = 0):
     y_true = y_true.cpu().numpy()
     y_pred = y_pred.cpu().numpy()
     multiple_labels = multiple_labels.cpu().numpy()
@@ -283,8 +287,8 @@ def compute_merged_metrics(y_true, y_pred, multiple_labels, majority_voting = Fa
         total_count = sum(length_counts.values())
         return {"sum": total_count, "length_counter": dict(length_counts)}
 
-    pred_intervals = generate_filtered_intervals(y_pred, multiple_labels, majority_voting=majority_voting, relative_distance_threshold=relative_distance_threshold)
-    true_intervals = generate_filtered_intervals(y_true, multiple_labels, majority_voting=False, relative_distance_threshold=0)
+    pred_intervals = generate_filtered_intervals(y_pred, multiple_labels, proximity_rule=proximity_rule, latency_threshold=latency_threshold)
+    true_intervals = generate_filtered_intervals(y_true, multiple_labels, proximity_rule=False, latency_threshold=0)
     
     tp, fp, fn = 0, 0, 0
     FP_indices, TP_indices, FN_indices = [], [], []
@@ -336,63 +340,3 @@ def compute_merged_metrics(y_true, y_pred, multiple_labels, majority_voting = Fa
     print("=" * 40)
     
     return results
-
-
-    # # Find the indices for TP, FN, FP
-    # TP_indices = np.where((y_true == 1) & (y_pred == 1))[0]
-    # FN_indices = np.where((y_true == 1) & (y_pred == 0))[0]
-    # FP_indices = np.where((y_true == 0) & (y_pred == 1))[0]
-    # GP_indices = np.where(y_true == 1)[0]
-
-    # def group_indices(indices):
-    #     if len(indices) == 0:
-    #         return []
-
-    #     groups = []
-    #     group_start = indices[0]
-    #     group_len = 1
-
-    #     for i in range(1, len(indices)):
-    #         if indices[i] - indices[i-1] <= 2:
-    #             group_len += 1
-    #         else:
-
-    #             groups.append((group_start, group_len))
-    #             group_start = indices[i]
-    #             group_len = 1
-
-    #     groups.append((group_start, group_len))
-        
-    #     return groups
-
-    # # Group the indices for TP, FN, and FP
-    # TP_groups = group_indices(TP_indices)
-    # FN_groups = group_indices(FN_indices)
-    # FP_groups = group_indices(FP_indices)
-    # GT_groups = group_indices(GP_indices)
-
-
-    # # print("True Positive Groups:", TP_groups)
-    # # print("False Negative Groups:", FN_groups)
-    # # print("False Positive Groups:", FP_groups)
-    # # print("Ground Truth Groups:", GT_groups)
-
-
-    # # Print results
-    # print("=" * 40)
-    # print("MERGED METRICS")
-    # print("=" * 40)
-
-    # print("GROUND TRUTH POSITIVE")
-    # len_stats(GT_groups)
-    # print("=" * 40)
-    # print("TRUE POSITIVE")
-    # len_stats(TP_groups)
-    # print("=" * 40)
-    # print("FALSE POSITIVE")
-    # len_stats(FP_groups)
-    # print("=" * 40)
-    # print("FALSE NEGATIVE")
-    # len_stats(FN_groups)
-    # print("=" * 40)
-    # print("=" * 40)
