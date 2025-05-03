@@ -37,3 +37,6 @@ The dataset used in this project is private. However, its structure and sample v
 - [3] Alber, M., Lapuschkin, S., Seegerer, P., Hägele, M., Schütt, K. T., Montavon, G., Samek, W., Müller, K.-R., Dähne, S., & Kindermans, P.-J. (2019). iNNvestigate Neural Networks! Journal of Machine Learning Research, 20(93), 1–8. Retrieved from [JMLR](http://jmlr.org/papers/v20/18-540.html)
 - [4] Kutafina, E., Troglio, A., De Col, R., Röhrig, R., Rossmanith, P., & Namer, B. (2022). Decoding Neuropathic Pain: Can We Predict Fluctuations of Propagation Speed in Stimulated Peripheral Nerve? Frontiers in Computational Neuroscience, 16, 899584. https://doi.org/10.3389/fncom.2022.899584
 
+## Licence
+
+This project is licensed under the MIT License.
